@@ -1,0 +1,12 @@
+---
+configuration:
+  model:
+    name: Model name
+    description: >-
+      HuggingFace model name (Qwen/Qwen3-ASR-0.6B, Qwen/Qwen3-ASR-1.7B).
+  debug_logging:
+    name: Debug logging
+    description: >-
+      Enable debug logging.
+network:
+  10300/tcp: qwen-asr Wyoming Protocol
