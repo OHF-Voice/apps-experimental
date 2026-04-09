@@ -5,7 +5,7 @@
 # ==============================================================================
 declare config
 
-# Wait for stt-tester to become available
+# Wait for qwen-asr to become available
 bash -c \
     "until
         echo '{ \"type\": \"describe\" }' 

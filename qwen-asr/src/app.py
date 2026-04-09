@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 from wyoming.asr import Transcript, Transcribe
-from wyoming.audio import AudioChunk, AudioStop, AudioStart
+from wyoming.audio import AudioChunk, AudioStop
 from wyoming.event import Event
 from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info
 from wyoming.server import AsyncEventHandler, AsyncServer
