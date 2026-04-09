@@ -1,0 +1,20 @@
+---
+version: 1.0.0
+slug: @@SLUG@@
+name: @@SLUG@@
+description: @@NAME@@
+url: https://github.com/OHF-Voice/apps-experimental/tree/master/@@SLUG@@
+arch:
+  - amd64
+  - aarch64
+init: false
+discovery:
+  - wyoming
+homeassistant_api: false
+options:
+  debug_logging: false
+schema:
+  debug_logging: bool
+ports:
+  "@@PORT@@/tcp": null
+homeassistant: 2023.11.0
