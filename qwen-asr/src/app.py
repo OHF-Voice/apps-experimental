@@ -186,6 +186,7 @@ class SttEventHandler(AsyncEventHandler):
             await self.write_event(Transcript(text=text, language=language).event())
 
             # Reset
+            self._wav_path.unlink(missing_ok=True)
             self._wav_file = None
             self._language = None
         elif Transcribe.is_type(event.type):

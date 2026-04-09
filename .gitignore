@@ -1,2 +1,3 @@
 .python-version
 .qwen/
+.mypy_cache/
