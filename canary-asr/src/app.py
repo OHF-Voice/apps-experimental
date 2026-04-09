@@ -75,7 +75,8 @@ async def main() -> None:
     if args.cache_dir:
         cache_dir = str(Path(args.cache_dir).resolve())
         os.environ["HF_HUB_CACHE"] = cache_dir
-        _LOGGER.debug("Set HF cache directory: %s", cache_dir)
+        os.environ["NEMO_CACHE_DIR"] = cache_dir
+        _LOGGER.debug("Set cache directory: %s", cache_dir)
 
     # Have to import after setting cache dir
     from nemo.collections.asr.models import ASRModel
