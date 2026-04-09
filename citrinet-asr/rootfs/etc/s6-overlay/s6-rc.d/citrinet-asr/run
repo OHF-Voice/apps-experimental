@@ -1,0 +1,21 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Start citrinet-asr service
+# ==============================================================================
+cd /usr/src
+
+flags=()
+
+if bashio::config.true 'debug_logging'; then
+    flags+=('--debug')
+fi
+
+exec python3 app.py \
+    --uri 'tcp://0.0.0.0:10300' \
+    --model "$(bashio::config 'model')" \
+    --http-host '0.0.0.0' \
+    --sentences /data/sentences.txt \
+    --train-dir /data/train \
+    --cache-dir /data/cache \
+    ${flags[@]}

@@ -1,0 +1,12 @@
+---
+configuration:
+  model:
+    name: Model name
+    description: >-
+      NeMo model to use. This app is only compatible with CTC models.
+  debug_logging:
+    name: Debug logging
+    description: >-
+      Enable debug logging.
+network:
+  10300/tcp: citrinet-asr Wyoming Protocol

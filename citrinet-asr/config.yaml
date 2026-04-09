@@ -1,0 +1,24 @@
+---
+version: 1.0.0-6
+slug: citrinet-asr
+name: citrinet-asr
+description: Citrinet ASR
+url: https://github.com/OHF-Voice/apps-experimental/tree/master/citrinet-asr
+arch:
+  - amd64
+  - aarch64
+init: false
+discovery:
+  - wyoming
+homeassistant_api: false
+options:
+  model: "stt_en_citrinet_256"
+  debug_logging: false
+schema:
+  model: "list(stt_be_conformer_ctc_large|stt_ca_conformer_ctc_large|stt_de_citrinet_1024|stt_de_conformer_ctc_large|stt_en_citrinet_1024|stt_en_citrinet_1024_gamma_0_25|stt_en_citrinet_256|stt_en_citrinet_256_gamma_0_25|stt_en_citrinet_512|stt_en_citrinet_512_gamma_0_25|stt_en_conformer_ctc_large|stt_en_conformer_ctc_large_ls|stt_en_conformer_ctc_medium|stt_en_conformer_ctc_medium_ls|stt_en_conformer_ctc_small|stt_en_conformer_ctc_small_ls|stt_en_conformer_ctc_xlarge|stt_en_fastconformer_ctc_large|stt_en_fastconformer_ctc_large_ls|stt_en_fastconformer_ctc_xlarge|stt_en_fastconformer_ctc_xxlarge|stt_en_squeezeformer_ctc_large_ls|stt_en_squeezeformer_ctc_medium_large_ls|stt_en_squeezeformer_ctc_medium_ls|stt_en_squeezeformer_ctc_small_ls|stt_en_squeezeformer_ctc_small_medium_ls|stt_en_squeezeformer_ctc_xsmall_ls|stt_eo_conformer_ctc_large|stt_es_citrinet_1024_gamma_0_25|stt_es_citrinet_512|stt_es_conformer_ctc_large|stt_fr_citrinet_1024_gamma_0_25|stt_fr_conformer_ctc_large|stt_fr_no_hyphen_citrinet_1024_gamma_0_25|stt_fr_no_hyphen_conformer_ctc_large|stt_hi_conformer_ctc_medium|stt_hr_conformer_ctc_large|stt_it_conformer_ctc_large|stt_mr_conformer_ctc_medium|stt_ru_conformer_ctc_large|stt_rw_conformer_ctc_large|stt_zh_citrinet_1024_gamma_0_25|stt_zh_citrinet_512)"
+  debug_logging: bool
+ports:
+  "10300/tcp": null
+homeassistant: 2023.11.0
+ingress: true
+ingress_port: 5000
