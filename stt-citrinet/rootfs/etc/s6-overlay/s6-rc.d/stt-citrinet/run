@@ -15,6 +15,7 @@ exec python3 app.py \
     --uri 'tcp://0.0.0.0:10300' \
     --model "$(bashio::config 'model')" \
     --http-host '0.0.0.0' \
+    --http-port 5000 \
     --sentences /data/sentences.txt \
     --train-dir /data/train \
     --cache-dir /data/cache \
