@@ -1,0 +1,31 @@
+FROM python:3.13
+
+# Set shell
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Install
+WORKDIR /usr/src
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+
+RUN \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        jq \
+        libfst-tools
+
+COPY requirements.txt ./
+
+RUN \
+    pip3 install --no-cache-dir -r ./requirements.txt \
+        --extra-index-url https://download.pytorch.org/whl/cpu
+
+COPY src/app.py ./
+COPY src/templates/ ./templates/
+
+WORKDIR /
+COPY run-local.sh ./
+
+EXPOSE 10300
+EXPOSE 5000
+
+ENTRYPOINT ["bash", "/run-local.sh"]
