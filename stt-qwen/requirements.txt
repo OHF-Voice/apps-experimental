@@ -1,2 +1,2 @@
-qwen-asr
+stt-qwen
 wyoming[zeroconf]

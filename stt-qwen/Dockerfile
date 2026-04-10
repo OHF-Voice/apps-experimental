@@ -32,5 +32,5 @@ COPY rootfs /
 HEALTHCHECK --start-period=10m \
     CMD echo '{ "type": "describe" }' \
         | nc -w 1 localhost 10300 \
-        | grep -iq "qwen-asr" \
+        | grep -iq "stt-qwen" \
         || exit 1

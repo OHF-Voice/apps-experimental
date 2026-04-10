@@ -1,9 +1,9 @@
 ---
 version: 1.0.0
-slug: qwen-asr
-name: qwen-asr
-description: Qwen ASR
-url: https://github.com/OHF-Voice/apps-experimental/tree/master/qwen-asr
+slug: stt-qwen
+name: Qwen Speech-to-Text
+description: Wyoming speech-to-text server for Qwen ASR
+url: https://github.com/OHF-Voice/apps-experimental/tree/master/stt-qwen
 arch:
   - amd64
   - aarch64

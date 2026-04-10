@@ -1,11 +1,11 @@
-# Qwen ASR
+# Qwen Speech-to-Text
 
-[Wyoming][wyoming] speech-to-text ([STT][stt]) app for [Qwen ASR][qwen-asr].
+[Wyoming][wyoming] speech-to-text ([STT][stt]) app for [Qwen ASR][stt-qwen].
 
 ## Installation
 
-After installing the app, go to "Device & Services" and add the discovered "qwen-asr".
-Next, set "qwen-asr" as your speech-to-text system in a voice assistant.
+After installing the app, go to "Device & Services" and add the discovered "stt-qwen".
+Next, set "stt-qwen" as your speech-to-text system in a voice assistant.
 
 ## Models
 
@@ -47,4 +47,4 @@ Next, set "qwen-asr" as your speech-to-text system in a voice assistant.
 
 [wyoming]: https://www.home-assistant.io/integrations/wyoming/
 [stt]: https://www.home-assistant.io/integrations/stt/
-[qwen-asr]: https://github.com/QwenLM/Qwen3-ASR/
+[stt-qwen]: https://github.com/QwenLM/Qwen3-ASR/

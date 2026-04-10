@@ -9,4 +9,4 @@ configuration:
     description: >-
       Enable debug logging.
 network:
-  10300/tcp: qwen-asr Wyoming Protocol
+  10300/tcp: stt-qwen Wyoming Protocol

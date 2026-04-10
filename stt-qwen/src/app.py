@@ -111,7 +111,7 @@ async def main() -> None:
     try:
         with tempfile.TemporaryDirectory() as temp_dir_str:
             wav_dir = Path(temp_dir_str)
-            await server.run(partial(SttEventHandler, model, wav_dir))
+            await server.run(partial(SttEventHandler, model, args.model, wav_dir))
     except KeyboardInterrupt:
         pass
 
@@ -125,6 +125,7 @@ class SttEventHandler(AsyncEventHandler):
     def __init__(
         self,
         model: "Qwen3ASRModel",
+        model_name: str,
         wav_dir: Path,
         *args,
         **kwargs,
@@ -134,6 +135,7 @@ class SttEventHandler(AsyncEventHandler):
 
         self.client_id = str(time.monotonic_ns())
         self.model = model
+        self.model_name = model_name
         self.wav_dir = wav_dir
         self._wav_file: Optional[wave.Wave_write] = None
         self._wav_path = wav_dir / f"{self.client_id}.wav"
@@ -208,17 +210,17 @@ class SttEventHandler(AsyncEventHandler):
         info = Info(
             asr=[
                 AsrProgram(
-                    name="qwen-asr",
+                    name="stt-qwen",
                     attribution=Attribution(
                         name="The Home Assistant Authors",
                         url="http://github.com/OHF-voice",
                     ),
-                    description="Qwen ASR",
+                    description="Qwen Speech-to-Text",
                     installed=True,
                     version="1.0.0",
                     models=[
                         AsrModel(
-                            name="qwen",
+                            name=self.model_name,
                             attribution=Attribution(
                                 name="QwenLM",
                                 url="https://github.com/QwenLM/Qwen3-ASR",
