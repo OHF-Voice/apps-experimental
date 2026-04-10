@@ -190,7 +190,7 @@ class SttEventHandler(AsyncEventHandler):
                         name="The Home Assistant Authors",
                         url="http://github.com/OHF-voice",
                     ),
-                    description="Canary 1b-v2",
+                    description="Canary Speech-to-Text",
                     installed=True,
                     version="0.0.1",
                     models=[

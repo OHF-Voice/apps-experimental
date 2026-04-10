@@ -1,9 +1,9 @@
 ---
 version: 1.0.0-6
-slug: Citrinet ASR
-name: citrinet-asr
-description: Citrinet ASR
-url: https://github.com/OHF-Voice/apps-experimental/tree/master/citrinet-asr
+slug: stt-citrinet
+name: Citrinet Speech-to-Text
+description: Limited Wyoming speech-to-text server for NeMo's CTC models
+url: https://github.com/OHF-Voice/apps-experimental/tree/master/stt-citrinet
 arch:
   - amd64
   - aarch64

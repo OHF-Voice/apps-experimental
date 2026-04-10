@@ -1,7 +1,7 @@
 #!/command/with-contenv bashio
 # shellcheck shell=bash
 # ==============================================================================
-# Start citrinet-asr service
+# Start stt-citrinet service
 # ==============================================================================
 cd /usr/src
 

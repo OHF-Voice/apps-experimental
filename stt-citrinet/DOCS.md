@@ -1,4 +1,4 @@
-# Citrinet ASR
+# Citrinet Speech-to-Text
 
 Limited [Wyoming][wyoming] speech-to-text ([STT][stt]) app for [NeMO][nemo] CTC models.
 
@@ -6,9 +6,9 @@ This app will only recognize the voice commands you give it.
 
 ## Installation
 
-Add the [OHF experimental][ohf-experimental] repo to your app repositories and install the `citrinet-asr` app.
+Add the [OHF experimental][ohf-experimental] repo to your app repositories and install the `stt-citrinet` app.
 
-After installing, add the discovered `citrinet-asr` service for the [Wyoming][wyoming] integration.
+After installing, add the discovered `stt-citrinet` service for the [Wyoming][wyoming] integration.
 
 ## Usage
 

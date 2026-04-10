@@ -1,4 +1,4 @@
-# Citrinet ASR
+# Citrinet Speech-to-Text
 
 Limited [Wyoming][wyoming] speech-to-text ([STT][stt]) app for [NeMO][nemo] CTC models.
 

@@ -192,12 +192,12 @@ class WyomingEventHandler(AsyncEventHandler):
         info = Info(
             asr=[
                 AsrProgram(
-                    name="citrinet-asr",
+                    name="stt-citrinet",
                     attribution=Attribution(
                         name="The Home Assistant Authors",
                         url="http://github.com/OHF-voice",
                     ),
-                    description="Citrinet ASR",
+                    description="Citrinet Speech-to-Text",
                     installed=True,
                     version="1.0.0",
                     models=[

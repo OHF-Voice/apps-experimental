@@ -34,5 +34,5 @@ COPY rootfs /
 HEALTHCHECK --start-period=10m \
     CMD echo '{ "type": "describe" }' \
         | nc -w 1 localhost 10300 \
-        | grep -iq "citrinet-asr" \
+        | grep -iq "stt-citrinet" \
         || exit 1

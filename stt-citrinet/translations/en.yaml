@@ -9,4 +9,4 @@ configuration:
     description: >-
       Enable debug logging.
 network:
-  10300/tcp: citrinet-asr Wyoming Protocol
+  10300/tcp: stt-citrinet Wyoming Protocol

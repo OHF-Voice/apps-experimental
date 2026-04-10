@@ -5,7 +5,7 @@
 # ==============================================================================
 declare config
 
-# Wait for citrinet-asr to become available
+# Wait for stt-citrinet to become available
 bash -c \
     "until
         echo '{ \"type\": \"describe\" }' 
