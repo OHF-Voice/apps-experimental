@@ -5,7 +5,7 @@
 # ==============================================================================
 declare config
 
-# Wait for canary-asr to become available
+# Wait for stt-canary to become available
 bash -c \
     "until
         echo '{ \"type\": \"describe\" }' 

@@ -32,5 +32,5 @@ COPY rootfs /
 HEALTHCHECK --start-period=10m \
     CMD echo '{ "type": "describe" }' \
         | nc -w 1 localhost 10300 \
-        | grep -iq "canary-asr" \
+        | grep -iq "stt-canary" \
         || exit 1

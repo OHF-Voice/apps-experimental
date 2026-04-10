@@ -185,7 +185,7 @@ class SttEventHandler(AsyncEventHandler):
         info = Info(
             asr=[
                 AsrProgram(
-                    name="canary-asr",
+                    name="stt-canary",
                     attribution=Attribution(
                         name="The Home Assistant Authors",
                         url="http://github.com/OHF-voice",

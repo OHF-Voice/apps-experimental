@@ -1,2 +1,2 @@
-# Canary ASR
+# Canary Speech-to-Text
 

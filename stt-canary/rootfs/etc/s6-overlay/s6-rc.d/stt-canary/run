@@ -1,7 +1,7 @@
 #!/command/with-contenv bashio
 # shellcheck shell=bash
 # ==============================================================================
-# Start canary-asr service
+# Start stt-canary service
 # ==============================================================================
 cd /usr/src
 

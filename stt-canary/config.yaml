@@ -1,9 +1,9 @@
 ---
 version: 0.0.1
-slug: canary-asr
-name: Canary ASR
-description: Canary ASR
-url: https://github.com/OHF-Voice/apps-experimental/tree/master/canary-asr
+slug: stt-canary
+name: Canary Speech-to-Text
+description: Wyoming speech-to-text server using NeMo's Canary
+url: https://github.com/OHF-Voice/apps-experimental/tree/master/stt-canary
 arch:
   - amd64
   - aarch64
