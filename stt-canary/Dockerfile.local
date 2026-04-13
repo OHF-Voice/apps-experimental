@@ -1,0 +1,29 @@
+FROM nvcr.io/nvidia/nemo:26.02
+
+# Set shell
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Install
+WORKDIR /usr/src
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+
+RUN \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        jq
+
+COPY requirements.txt ./requirements.all.txt
+RUN grep -v 'nemo' ./requirements.all.txt > ./requirements.txt
+
+RUN \
+    pip3 install --no-cache-dir -r ./requirements.txt
+
+COPY src/app.py ./
+
+WORKDIR /
+COPY run-local.sh ./
+
+EXPOSE 10300
+EXPOSE 5000
+
+ENTRYPOINT ["bash", "/run-local.sh"]

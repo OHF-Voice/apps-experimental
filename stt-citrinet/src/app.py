@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import wave
+import unicodedata
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Union, cast
@@ -29,6 +30,24 @@ _LOGGER = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 EPS = "<eps>"
 BLANK = "<blank>"
+DEFAULT_COMMANDS = ["what time is it", "nevermind"]
+
+SUPPORTED_LANGUAGES = [
+    "be",
+    "ca",
+    "de",
+    "en",
+    "eo",
+    "es",
+    "fr",
+    "hi",
+    "hr",
+    "it",
+    "mr",
+    "ru",
+    "rw",
+    "zh",
+]
 
 # -----------------------------------------------------------------------------
 
@@ -64,7 +83,7 @@ async def main() -> None:
     sentences_path = Path(args.sentences)
     sentences_path.parent.mkdir(parents=True, exist_ok=True)
     if not sentences_path.exists():
-        sentences_path.write_text("what time is it\n", encoding="utf-8")
+        sentences_path.write_text("\n".join(DEFAULT_COMMANDS), encoding="utf-8")
 
     if args.cache_dir:
         cache_dir = str(Path(args.cache_dir).resolve())
@@ -210,7 +229,7 @@ class WyomingEventHandler(AsyncEventHandler):
                             installed=True,
                             description=self.model_name,
                             version=None,
-                            languages=[self.language],
+                            languages=SUPPORTED_LANGUAGES,
                         )
                     ],
                 )
@@ -265,14 +284,10 @@ async def train(model: "ASRModel", train_dir: Path, sentences_path: Path) -> Non
         token2char_txt = train_dir / "token2char.fst.txt"
         with open(token2char_txt, "w", encoding="utf-8") as token2char_file:
             start = 0
-
             char2state = {c: i for i, c in enumerate(char2idx, start=1)}
 
             # blank loop at start
             print(start, start, BLANK, EPS, file=token2char_file)
-
-            # make start final
-            print(start, file=token2char_file)
 
             for c, c_state in char2state.items():
                 if c == BLANK:
@@ -324,6 +339,10 @@ async def train(model: "ASRModel", train_dir: Path, sentences_path: Path) -> Non
             line = line.strip()
             if not line:
                 continue
+
+            # Normalize
+            line = unicodedata.normalize("NFC", line)
+            line = line.lower()
 
             words = [f"t_{t_id}" for t_id in tokenizer.text_to_ids(line)]
             if not words:
@@ -418,6 +437,22 @@ async def transcribe(model: "ASRModel", train_dir: Path, wav_path: Path) -> str:
     blank_id = char2idx[BLANK]
     idx2char = {i: c for c, i in char2idx.items()}
 
+    # Log greedy decode
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        blank_logit_id = log_probs.shape[-1] - 1
+        pred_ids = torch.argmax(log_probs, dim=-1).tolist()
+        collapsed = []
+        prev = None
+        for t in pred_ids:
+            if t != prev:
+                collapsed.append(t)
+            prev = t
+
+        collapsed = [t for t in collapsed if t != blank_logit_id]
+        greedy_text = tokenizer.ids_to_text(collapsed)
+        _LOGGER.debug("Greedy transcript: %s", greedy_text)
+
+    # Filter tokens to only those present in the grammar
     allowed_token_ids: Set[int] = set()
     with open(tokens_txt, "r", encoding="utf-8") as words_file:
         for line in words_file:
@@ -434,6 +469,7 @@ async def transcribe(model: "ASRModel", train_dir: Path, wav_path: Path) -> str:
                 t_id = int(label.split("_", maxsplit=1)[1])
                 allowed_token_ids.add(t_id)
 
+    # FST shortest path decoding with grammar
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         logits_txt = temp_dir / "logits.fst.txt"
@@ -502,6 +538,8 @@ async def transcribe(model: "ASRModel", train_dir: Path, wav_path: Path) -> str:
             sentence_prob += word_prob
 
     text = tokenizer.ids_to_text(token_ids)
+    _LOGGER.debug("Final text with probability (%s): %s", sentence_prob, text)
+
     return text
 
 

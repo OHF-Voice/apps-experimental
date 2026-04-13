@@ -1,7 +1,7 @@
 # Qwen Speech-to-Text
 
-[Wyoming][wyoming] speech-to-text ([STT][stt]) app for [Qwen ASR][stt-qwen].
+[Wyoming][wyoming] speech-to-text ([STT][stt]) app for [Qwen ASR][qwen-asr].
 
 [wyoming]: https://www.home-assistant.io/integrations/wyoming/
 [stt]: https://www.home-assistant.io/integrations/stt/
-[stt-qwen]: https://github.com/QwenLM/Qwen3-ASR/
+[qwen-asr]: https://github.com/QwenLM/Qwen3-ASR/

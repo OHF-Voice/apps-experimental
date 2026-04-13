@@ -160,11 +160,21 @@ for raw_line in lines:
         ports.append((key, parse_scalar(value)))
 
 
-# Emit normal ports
+for arg in override_args:
+    if "=" not in arg:
+        raise SystemExit(f"Invalid override: {arg}")
+    key, value = arg.split("=", 1)
+    key = key.strip()
+    if not key:
+        raise SystemExit(f"Invalid override key in: {arg}")
+    options[key] = parse_scalar(value)
+
+with open(output_path, "w", encoding="utf-8") as f:
+    json.dump(options, f, indent=2)
+    f.write("\n")
 
 for container_port, host_binding in ports:
-    container_port = strip_quotes(container_port).strip()
-
+    container_port = strip_quotes(container_port)   # e.g. 10300/tcp
     if "/" in container_port:
         container_num, proto = container_port.split("/", 1)
         container_spec = f"{container_num}/{proto}"
@@ -174,21 +184,18 @@ for container_port, host_binding in ports:
 
     if host_binding is None or host_binding == "":
         print(f"PORTMAP={container_num}:{container_spec}")
-
     elif isinstance(host_binding, int):
         print(f"PORTMAP={host_binding}:{container_spec}")
-
     else:
-        host_binding = str(host_binding).strip()
+        host_binding = str(host_binding)
         print(f"PORTMAP={host_binding}:{container_spec}")
 
+print(f"OPTIONS_JSON={output_path}")
 
 # Emit ingress port
 
 if ingress_port is not None:
     print(f"PORTMAP={ingress_port}:{ingress_port}/tcp")
-
-print(f"OPTIONS_JSON={output_path}")
 PY
 )
 
@@ -227,4 +234,4 @@ docker run --rm -it \
   --name "${container_name}" \
   "${PORT_ARGS[@]}" \
   -v "${data_dir}:/data" \
-  "${image_tag}"
+  ${EXTRA_DOCKER_ARGS} "${image_tag}"

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Voice Commands</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: system-ui, sans-serif;
+            background: #f5f7fb;
+            color: #1f2937;
+        }
+
+        .wrap {
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        .card {
+            background: white;
+            border: 1px solid #d1d5db;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 420px;
+            box-sizing: border-box;
+            resize: vertical;
+            padding: 16px;
+            font: 15px/1.5 ui-monospace, monospace;
+            border: 1px solid #d1d5db;
+            border-radius: 12px;
+        }
+
+        .actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        button {
+            border: 0;
+            border-radius: 10px;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            background: #2563eb;
+            color: white;
+        }
+
+        button:disabled {
+            opacity: 0.65;
+            cursor: wait;
+        }
+
+        .status {
+            min-height: 24px;
+            font-size: 14px;
+        }
+
+        .status.saving {
+            color: #1d4ed8;
+        }
+
+        .status.success {
+            color: #166534;
+        }
+
+        .status.error {
+            color: #b91c1c;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            vertical-align: -2px;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="card">
+            <h1>Voice Commands</h1>
+
+            <p>
+                Write your voice commands below, one sentence per line with no punctuation (lower case).
+                <br />
+                Numbers and abbreviations must be written out as words (1 &rarr; one, A.C. &rarr; a c).
+            </p>
+
+            <form id="save-form">
+                <textarea name="content" id="content">{{ content }}</textarea>
+
+                <div class="actions">
+                    <button type="submit" id="save-button">Save</button>
+                    <div id="status" class="status" aria-live="polite"></div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById("save-form");
+        const saveButton = document.getElementById("save-button");
+        const statusEl = document.getElementById("status");
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            saveButton.disabled = true;
+            statusEl.className = "status saving";
+            statusEl.innerHTML = '<span class="spinner"></span>Saving...';
+
+            try {
+                const formData = new FormData(form);
+
+                const response = await fetch("{{ url_for('save') }}", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const result = await response.json();
+
+                statusEl.className = "status success";
+                statusEl.textContent = result.message || "Saved successfully.";
+            } catch (error) {
+                statusEl.className = "status error";
+                statusEl.textContent = "Save failed.";
+                console.error(error);
+            } finally {
+                saveButton.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
