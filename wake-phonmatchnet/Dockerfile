@@ -23,7 +23,12 @@ RUN \
     && pip3 install --no-cache-dir -r ./requirements.txt \
     && rm -rf /var/lib/apt/lists/*
 
-COPY src/app.py src/test.wav ./
+COPY model/ ./model/
+COPY nltk_data/ /usr/share/nltk_data/
+COPY src/dataset/ ./dataset/
+COPY src/ukws_model/ ./ukws_model/
+COPY src/ukws.py ./
+COPY src/app.py ./
 
 WORKDIR /
 COPY rootfs /
@@ -31,5 +36,5 @@ COPY rootfs /
 HEALTHCHECK --start-period=10m \
     CMD echo '{ "type": "describe" }' \
         | nc -w 1 localhost 10400 \
-        | grep -iq "wake-phonmatchnet" \
+        | grep -iq "phonmatchnet" \
         || exit 1

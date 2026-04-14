@@ -49,7 +49,7 @@ async def main() -> None:
         help="Detection threshold from 0-1 (higher reduces false positives)",
     )
     parser.add_argument(
-        "--triggers",
+        "--trigger-count",
         type=int,
         default=1,
         help="Number of windows beyond threshold for detection (higher reduces false positives)",
@@ -85,7 +85,7 @@ async def main() -> None:
         checkpoint_path,
         ww_spoken,
         detect_threshold=args.threshold,
-        trigger_count=args.triggers,
+        trigger_count=args.trigger_count,
     )
     _LOGGER.debug("Loaded model")
 

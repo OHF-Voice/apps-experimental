@@ -9,7 +9,7 @@ configuration:
     description: >-
       Threshold from 0 to 1, where higher reduces false positives.
       Default is 0.5
-  triggers:
+  trigger_count:
     name: Trigger count
     description: >-
       Number of times the detection threshold must be exceeded to trigger.

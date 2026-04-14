@@ -15,11 +15,11 @@ For example: `glah-duhs:glados` will detect "glados" but spelled out more as its
 
 ## Sensitivity
 
-Adjust `threshold` and `triggers` to change the sensitivity. The defaults are 0.5 and 1, respectively.
+Adjust `threshold` and `trigger_count` to change the sensitivity. The defaults are 0.5 and 1, respectively.
 
 Increasing the threshold means the model must be more sure before triggering. Increasing the trigger count means that multiple audio windows in a row must exceed the threshold before triggering.
 
-Sometimes it's better to have a lower threshold and a higher trigger count instead of just a high threshold. For example: `threshold` = 0.2 and `triggers` = 2.
+Sometimes it's better to have a lower threshold and a higher trigger count instead of just a high threshold. For example: `threshold` = 0.2 and `trigger_count` = 2.
 
 ## Future Ideas
 
