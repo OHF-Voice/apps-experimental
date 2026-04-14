@@ -12,5 +12,5 @@ if bashio::config.true 'debug_logging'; then
 fi
 
 exec python3 app.py \
-    --uri 'tcp://0.0.0.0:10300' \
+    --uri 'tcp://0.0.0.0:@@PORT@@' \
     ${flags[@]}

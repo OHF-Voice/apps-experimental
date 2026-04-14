@@ -23,7 +23,7 @@ RUN \
     && pip3 install --no-cache-dir -r ./requirements.txt \
     && rm -rf /var/lib/apt/lists/*
 
-COPY src/app.py src/test.wav ./
+COPY src/app.py ./
 
 WORKDIR /
 COPY rootfs /
