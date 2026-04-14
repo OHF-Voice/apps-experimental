@@ -7,7 +7,11 @@ import time
 import os
 from functools import partial
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, List
+
+# Needed by PhonMatchNet
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
 
 import numpy as np
 from wyoming.event import Event
@@ -30,7 +34,11 @@ async def main() -> None:
     """Run app."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--uri", required=True, help="unix:// or tcp://")
-    parser.add_argument("--wake-word", required=True, help="Wake word to listen for")
+    parser.add_argument(
+        "--wake-word",
+        required=True,
+        help="Wake words to listen for separate by ',' in the form input:output or just input",
+    )
     parser.add_argument(
         "--checkpoint", required=True, help="Model checkpoint directory"
     )
@@ -41,6 +49,12 @@ async def main() -> None:
         help="Detection threshold from 0-1 (higher reduces false positives)",
     )
     parser.add_argument(
+        "--triggers",
+        type=int,
+        default=1,
+        help="Number of windows beyond threshold for detection (higher reduces false positives)",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to console"
     )
     args = parser.parse_args()
@@ -49,13 +63,17 @@ async def main() -> None:
     _LOGGER.debug(args)
 
     # input/output
-    if ":" in args.wake_word:
-        wake_word = args.wake_word.split(":", maxsplit=1)
-    else:
-        wake_word = (args.wake_word, args.wake_word)
+    ww_spoken = []
+    ww_phrases = []
+    for wake_word in args.wake_word.split(","):
+        wake_word = wake_word.strip()
+        if ":" in wake_word:
+            spoken, phrase = wake_word.split(":", maxsplit=1)
+        else:
+            spoken, phrase = (wake_word, wake_word)
 
-    # Needed by PhonMatchNet
-    os.environ["TF_USE_LEGACY_KERAS"] = "1"
+        ww_spoken.append(spoken)
+        ww_phrases.append(phrase)
 
     from ukws import UniversalKeywordSearch, find_latest_checkpoint
 
@@ -63,14 +81,19 @@ async def main() -> None:
     checkpoint_path = find_latest_checkpoint(args.checkpoint)
 
     _LOGGER.debug("Loading model: %s", checkpoint_path)
-    model = UniversalKeywordSearch(checkpoint_path, wake_word[0], detect_threshold=args.threshold)
+    model = UniversalKeywordSearch(
+        checkpoint_path,
+        ww_spoken,
+        detect_threshold=args.threshold,
+        trigger_count=args.triggers,
+    )
     _LOGGER.debug("Loaded model")
 
     server = AsyncServer.from_uri(args.uri)
     _LOGGER.info("Ready")
 
     try:
-        await server.run(partial(WyomingEventHandler, model, wake_word[1]))
+        await server.run(partial(WyomingEventHandler, model, ww_phrases))
     except KeyboardInterrupt:
         pass
 
@@ -84,7 +107,7 @@ class WyomingEventHandler(AsyncEventHandler):
     def __init__(
         self,
         model: "UniversalKeywordSearch",
-        wake_word: str,
+        wake_words: List[str],
         *args,
         **kwargs,
     ) -> None:
@@ -93,7 +116,7 @@ class WyomingEventHandler(AsyncEventHandler):
 
         self.client_id = str(time.monotonic_ns())
         self.model = model
-        self.wake_word = wake_word
+        self.wake_words = wake_words
         self.converter = AudioChunkConverter(rate=16000, width=2, channels=1)
         self.audio_timestamp = 0
         self.detected = False
@@ -128,14 +151,17 @@ class WyomingEventHandler(AsyncEventHandler):
             audio_array = (
                 np.frombuffer(chunk.audio, dtype=np.int16).astype(np.float32) / 32768.0
             )
-            if self.model.process_chunk(audio_array):
+            detected_idxs = self.model.process_chunk(audio_array)
+            if detected_idxs:
                 self.detected = True
-                await self.write_event(
-                    Detection(
-                        name=self.wake_word, timestamp=self.audio_timestamp
-                    ).event()
-                )
-                _LOGGER.debug("Detected %s at %s", self.wake_word, self.audio_timestamp)
+                for ww_idx in detected_idxs:
+                    ww_phrase = self.wake_words[ww_idx]
+                    await self.write_event(
+                        Detection(
+                            name=ww_phrase, timestamp=self.audio_timestamp
+                        ).event()
+                    )
+                    _LOGGER.debug("Detected %s at %s", ww_phrase, self.audio_timestamp)
                 self.model.reset()
 
             self.audio_timestamp += chunk.milliseconds
@@ -170,9 +196,9 @@ class WyomingEventHandler(AsyncEventHandler):
                     version="1.0.0",
                     models=[
                         WakeModel(
-                            name=self.wake_word,
-                            description=self.wake_word,
-                            phrase=self.wake_word,
+                            name=wake_word,
+                            description=wake_word,
+                            phrase=wake_word,
                             attribution=Attribution(
                                 name="The Home Assistant Authors",
                                 url="http://github.com/OHF-voice",
@@ -181,6 +207,7 @@ class WyomingEventHandler(AsyncEventHandler):
                             languages=["en"],
                             version="v1",
                         )
+                        for wake_word in self.wake_words
                     ],
                 )
             ],

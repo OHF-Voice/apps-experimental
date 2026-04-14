@@ -3,7 +3,18 @@ configuration:
   wake_word:
     name: Wake word
     description: >-
-      Wake word to listen for.
+      Wake word to listen for separate by ',' in the form input:output or just input.
+  threshold:
+    name: Detection threshold
+    description: >-
+      Threshold from 0 to 1, where higher reduces false positives.
+      Default is 0.5
+  triggers:
+    name: Trigger count
+    description: >-
+      Number of times the detection threshold must be exceeded to trigger.
+      Higher trigger count reduces false positives.
+      Default is 1.
   debug_logging:
     name: Debug logging
     description: >-

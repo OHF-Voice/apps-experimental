@@ -14,4 +14,6 @@ fi
 exec python3 app.py \
     --uri 'tcp://0.0.0.0:10400' \
     --wake-word "$(bashio::config 'wake_word')" \
+    --threshold "$(bashio::config 'threshold')" \
+    --triggers "$(bashio::config 'triggers')" \
     ${flags[@]}

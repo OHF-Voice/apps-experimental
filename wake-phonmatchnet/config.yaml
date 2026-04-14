@@ -12,10 +12,14 @@ discovery:
   - wyoming
 homeassistant_api: false
 options:
-  wake_word: "okay nahboo:okay nabu"
+  wake_word: "okay nahboo:okay nabu, hey jarvis"
+  threshold: 0.5
+  triggers: 1
   debug_logging: false
 schema:
   wake_word: str
+  threshold: float
+  triggers: 1
   debug_logging: bool
 ports:
   "10400/tcp": null
