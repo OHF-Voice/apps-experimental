@@ -55,6 +55,18 @@ async def main() -> None:
         help="Number of windows beyond threshold for detection (higher reduces false positives)",
     )
     parser.add_argument(
+        "--window-length",
+        type=float,
+        default=1.25,
+        help="Seconds of audio in each window",
+    )
+    parser.add_argument(
+        "--hop-length",
+        type=float,
+        default=0.5,
+        help="Seconds of audio between each hop",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to console"
     )
     args = parser.parse_args()
@@ -86,6 +98,8 @@ async def main() -> None:
         ww_spoken,
         detect_threshold=args.threshold,
         trigger_count=args.trigger_count,
+        window_s=args.window_length,
+        hop_s=args.hop_length,
     )
     _LOGGER.debug("Loaded model")
 

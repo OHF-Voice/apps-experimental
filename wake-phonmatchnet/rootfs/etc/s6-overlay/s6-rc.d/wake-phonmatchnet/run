@@ -16,5 +16,7 @@ exec python3 app.py \
     --wake-word "$(bashio::config 'wake_word')" \
     --threshold "$(bashio::config 'threshold')" \
     --trigger-count "$(bashio::config 'trigger_count')" \
+    --window-length "$(bashio::config 'window_length')" \
+    --hop-length "$(bashio::config 'hop_length')" \
     --checkpoint ./model \
     ${flags[@]}

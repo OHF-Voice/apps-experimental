@@ -26,6 +26,7 @@ Sometimes it's better to have a lower threshold and a higher trigger count inste
 - Performance improvements - audio features are recomputed every window
 - Allow phonemes directly for wake word - more control over pronunciations
 - Allow different thresholds/trigger counts for each wake word
+- Put VAD in front of detector - reduce false positives
 - Train model on more datasets - trained on LibriSpeech clean 360 + Qualcomm + Google keywords
 
 [wyoming]: https://www.home-assistant.io/integrations/wyoming/

@@ -1,5 +1,5 @@
 ---
-version: 1.0.0
+version: 1.0.0-10
 slug: wake-phonmatchnet
 name: PhonMatchNet Wake Word
 description: PhonMatchNet Wake Word
@@ -15,11 +15,15 @@ options:
   wake_word: "okay nahbu:okay nabu, hey jarvis"
   threshold: 0.5
   trigger_count: 1
+  window_length: 1.25
+  hop_length: 0.5
   debug_logging: false
 schema:
   wake_word: str
   threshold: float
   trigger_count: int
+  window_length: float
+  hop_length: float
   debug_logging: bool
 ports:
   "10400/tcp": null
