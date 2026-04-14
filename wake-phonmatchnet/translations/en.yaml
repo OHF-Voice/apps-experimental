@@ -1,0 +1,12 @@
+---
+configuration:
+  wake_word:
+    name: Wake word
+    description: >-
+      Wake word to listen for.
+  debug_logging:
+    name: Debug logging
+    description: >-
+      Enable debug logging.
+network:
+  10400/tcp: wake-phonmatchnet Wyoming Protocol

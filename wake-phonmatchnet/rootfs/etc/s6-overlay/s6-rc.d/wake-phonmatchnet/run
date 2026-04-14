@@ -1,0 +1,17 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Start wake-phonmatchnet service
+# ==============================================================================
+cd /usr/src
+
+flags=()
+
+if bashio::config.true 'debug_logging'; then
+    flags+=('--debug')
+fi
+
+exec python3 app.py \
+    --uri 'tcp://0.0.0.0:10400' \
+    --wake-word "$(bashio::config 'wake_word')" \
+    ${flags[@]}

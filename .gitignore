@@ -1,4 +1,5 @@
 .python-version
 .qwen/
 .mypy_cache/
+__pycache__/
 .addon_data/
