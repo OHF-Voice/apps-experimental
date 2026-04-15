@@ -1,0 +1,218 @@
+---
+language: en
+commands:
+
+  # ---------------------------------------------------------------------------
+  # Date/Time
+  # ---------------------------------------------------------------------------
+  - id: "current_date"
+    intent: HassGetCurrentDate
+    description: "get current date"
+    sentences:
+      - "what's the date"
+    hass_response: |
+      {% set day = now().day %}
+      {% set suffix = 'th' %}
+      {% if day % 100 not in [11, 12, 13] %}
+        {% if day % 10 == 1 %}
+          {% set suffix = 'st' %}
+        {% elif day % 10 == 2 %}
+          {% set suffix = 'nd' %}
+        {% elif day % 10 == 3 %}
+          {% set suffix = 'rd' %}
+        {% endif %}
+      {% endif %}
+
+      {{ now().strftime("%B ") }}{{ day }}{{ suffix }}, {{ now().year }}
+
+  - id: "current_time"
+    intent: HassGetCurrentTime
+    description: "get current time"
+    sentences:
+      - "what time is it"
+    hass_response: |
+      {{ now().strftime("%I")|int }}:{{ now().strftime("%M %p") }}
+
+  # ---------------------------------------------------------------------------
+  # Timers
+  # ---------------------------------------------------------------------------
+  - id: "start_timer"
+    intent: HassStartTimer
+    description: "start a timer with a duration"
+    duration: true
+    sentences:
+      - "set a timer for 10 seconds"
+      - "set a timer for 10 minutes"
+      - "set a timer for 10 hours"
+    response: "Starting timer."
+
+  - id: "pause_timer"
+    intent: HassPauseTimer
+    description: "pause the latest timer"
+    sentences:
+      - "pause timer"
+    response: "Pausing timer."
+
+  - id: "unpause_timer"
+    intent: HassUnpauseTimer
+    description: "resume the latest timer"
+    sentences:
+      - "resume timer"
+    response: "Resuming timer."
+
+  - id: "cancel_timer"
+    intent: HassCancelTimer
+    description: "cancel the latest timer"
+    sentences:
+      - "cancel timer"
+    response: "Canceling timer."
+
+  - id: "cancel_all_timers"
+    intent: HassCancelAllTimers
+    description: "cancel all timers"
+    sentences:
+      - "cancel all timers"
+    response: "Canceling all timers."
+
+  # ---------------------------------------------------------------------------
+  # Lights
+  # ---------------------------------------------------------------------------
+  - id: "turn_on_lights"
+    intent: HassTurnOn
+    description: "turn on the lights in the current area"
+    current_area: true
+    slots:
+      domain: light
+    sentences:
+      - "turn on the lights"
+    response: "Turning on the lights."
+
+  - id: "turn_off_lights"
+    intent: HassTurnOff
+    description: "turn off the lights in the current area"
+    current_area: true
+    slots:
+      domain: light
+    sentences:
+      - "turn off the lights"
+    response: "Turning off the lights."
+
+  - id: "set_brightness_lights"
+    intent: HassLightSet
+    description: "set the brightness of lights in the current area"
+    current_area: true
+    percentage:
+      slot: brightness
+    sentences:
+      - "set brightness to 10 percent"
+    response: |
+      Setting brightness to {{ slots.brightness }} percent.
+
+  # ---------------------------------------------------------------------------
+  # Media
+  # ---------------------------------------------------------------------------
+  - id: "media_pause"
+    intent: HassMediaPause
+    description: "pauses playing media player in current area"
+    current_area: true
+    sentences:
+      - "pause"
+      - "pause the music"
+      - "pause TV"
+    response: "Pausing media."
+
+  - id: "media_unpause"
+    intent: HassMediaUnpause
+    description: "resumes playing media player in current area"
+    current_area: true
+    sentences:
+      - "resume"
+      - "resume the music"
+      - "unpause music"
+    response: "Resuming media."
+
+  - id: "media_next"
+    intent: HassMediaNext
+    description: "skips to next track on playing media player in current area"
+    current_area: true
+    sentences:
+      - "next"
+      - "skip to the next track"
+      - "skip this song"
+    response: "Skipping to next track."
+
+  - id: "media_volume_up"
+    intent: HassSetVolumeRelative
+    description: "increases the volume of the playing media player in current area"
+    current_area: true
+    slots:
+      volume_step: "up"
+    sentences:
+      - "volume up"
+      - "turn up the volume"
+      - "make the music louder"
+    response: "Increasing volume."
+
+  - id: "media_volume_down"
+    intent: HassSetVolumeRelative
+    description: "decreases the volume of the playing media player in current area"
+    current_area: true
+    slots:
+      volume_step: "down"
+    sentences:
+      - "volume down"
+      - "turn down the volume"
+      - "make the music quieter"
+    response: "Decreasing volume."
+
+  - id: "media_volume_set"
+    intent: HassSetVolume
+    description: "decreases the volume of the playing media player in current area"
+    current_area: true
+    percentage:
+      slot: "volume_level"
+    sentences:
+      - "set volume to 10 percent"
+      - "volume 10%"
+    response: "Decreasing volume."
+
+  # ---------------------------------------------------------------------------
+  # Weather
+  # ---------------------------------------------------------------------------
+  - id: "weather_forecast"
+    intent: HassGetWeather
+    description: "gets the current weather forecast"
+    sentences:
+      - what is the weather today
+      - tell me the weather forecast
+      - how's the weather
+    hass_response: |
+      {% set weather_id = states.weather | selectattr('state', 'ne', 'unavailable') | map(attribute='entity_id') | first %}
+      {% if weather_id %}
+        {% set name = state_attr(weather_id, 'friendly_name') or 'Outside' %}
+        {% set cond = states(weather_id) %}
+        {% set temp = state_attr(weather_id, 'temperature') %}
+        {% set unit = state_attr(weather_id, 'temperature_unit') or '°' %}
+        {% set hum = state_attr(weather_id, 'humidity') %}
+        {% set wind = state_attr(weather_id, 'wind_speed') %}
+        {% set wind_unit = state_attr(weather_id, 'wind_speed_unit') %}
+
+        {% macro pretty_condition(c) -%}
+          {{ (c or 'unknown') | replace('_', ' ') }}
+        {%- endmacro %}
+
+        Currently {{ pretty_condition(cond) }}{% if temp is not none %}, {{ temp | round(0) }}{{ unit }}{% endif %}{% if hum is not none %}, humidity {{ hum }} percent{% endif %}{% if wind is not none %}, wind {{ wind | round(0) }}{% if wind_unit %} {{ wind_unit }}{% endif %}{% endif %}.
+
+      {% else %}
+      No weather entity available.
+      {% endif %}
+
+  # ---------------------------------------------------------------------------
+  # Misc
+  # ---------------------------------------------------------------------------
+  - id: "nevermind"
+    intent: HassNevermind
+    description: "cancels command"
+    sentences:
+      - "nevermind"
+    response: ""

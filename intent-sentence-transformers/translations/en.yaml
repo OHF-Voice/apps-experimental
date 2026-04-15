@@ -1,0 +1,8 @@
+---
+configuration:
+  debug_logging:
+    name: Debug logging
+    description: >-
+      Enable debug logging.
+network:
+  10500/tcp: intent-sentence-transformers Wyoming Protocol
