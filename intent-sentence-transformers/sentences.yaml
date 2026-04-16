@@ -78,21 +78,23 @@ commands:
   # Lights
   # ---------------------------------------------------------------------------
   - id: "turn_on_lights"
-    intent: HassTurnOn
+    intent:
+      name: HassTurnOn
+      slots:
+        domain: light
     description: "turn on the lights in the current area"
     current_area: true
-    slots:
-      domain: light
     sentences:
       - "turn on the lights"
     response: "Turning on the lights."
 
   - id: "turn_off_lights"
-    intent: HassTurnOff
+    intent:
+      name: HassTurnOff
+      slots:
+        domain: light
     description: "turn off the lights in the current area"
     current_area: true
-    slots:
-      domain: light
     sentences:
       - "turn off the lights"
     response: "Turning off the lights."
@@ -142,11 +144,12 @@ commands:
     response: "Skipping to next track."
 
   - id: "media_volume_up"
-    intent: HassSetVolumeRelative
+    intent:
+      name: HassSetVolumeRelative
+      slots:
+        volume_step: "up"
     description: "increases the volume of the playing media player in current area"
     current_area: true
-    slots:
-      volume_step: "up"
     sentences:
       - "volume up"
       - "turn up the volume"
@@ -154,11 +157,12 @@ commands:
     response: "Increasing volume."
 
   - id: "media_volume_down"
-    intent: HassSetVolumeRelative
+    intent:
+      name: HassSetVolumeRelative
+      slots:
+        volume_step: "down"
     description: "decreases the volume of the playing media player in current area"
     current_area: true
-    slots:
-      volume_step: "down"
     sentences:
       - "volume down"
       - "turn down the volume"
@@ -180,7 +184,6 @@ commands:
   # Weather
   # ---------------------------------------------------------------------------
   - id: "weather_forecast"
-    intent: HassGetWeather
     description: "gets the current weather forecast"
     sentences:
       - what is the weather today

@@ -200,3 +200,48 @@ class HomeAssistant:
                 assert msg["type"] == "event"
 
                 return msg["event"]["result"]
+
+    async def trigger_service(
+        self,
+        domain: str,
+        service: str,
+        service_data: Optional[Dict[str, Any]] = None,
+        target: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        current_id = 0
+
+        def next_id() -> int:
+            nonlocal current_id
+            current_id += 1
+            return current_id
+
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                self.websocket_api_url, max_msg_size=0
+            ) as websocket:
+                # Authenticate
+                msg = await websocket.receive_json()
+                assert msg["type"] == "auth_required", msg
+
+                await websocket.send_json(
+                    {
+                        "type": "auth",
+                        "access_token": self.token,
+                    },
+                )
+
+                msg = await websocket.receive_json()
+                assert msg["type"] == "auth_ok", msg
+
+                await websocket.send_json(
+                    {
+                        "id": next_id(),
+                        "type": "call_service",
+                        "domain": domain,
+                        "service": service,
+                        "service_data": service_data or {},
+                        "target": target or {},
+                    },
+                )
+                msg = await websocket.receive_json()
+                assert msg["success"], msg

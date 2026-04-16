@@ -4,20 +4,21 @@ import argparse
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import yaml
 from jinja2 import BaseLoader, Environment
 from wyoming.asr import Transcript
 from wyoming.event import Event
+from wyoming.handle import Handled
 from wyoming.info import Attribution, Describe, Info, IntentModel, IntentProgram
 from wyoming.intent import Entity, Intent, NotRecognized
 from wyoming.server import AsyncEventHandler, AsyncServer
-from wyoming.error import Error
 
-from hass_api import HomeAssistant
+from hass_api import HomeAssistant, InfoForRecognition
 
 if TYPE_CHECKING:
     from command_matcher import CommandMatcher
@@ -126,7 +127,7 @@ async def main() -> None:
 class WyomingEventHandler(AsyncEventHandler):
     """Event handler for clients."""
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments
         self,
         language: str,
         matcher: "CommandMatcher",
@@ -175,6 +176,7 @@ class WyomingEventHandler(AsyncEventHandler):
 
             satellite_id = satellite_id or self.satellite_id
 
+            hass_info: Optional[InfoForRecognition] = None
             if satellite_id:
                 hass_info = await self.hass.get_info(satellite_id=satellite_id)
                 current_area_id = hass_info.current_area_id
@@ -205,30 +207,99 @@ class WyomingEventHandler(AsyncEventHandler):
             elif isinstance(command_match, CommandMatch):
                 # Match succeeded
                 command = command_match.command
-                slots = command.intent_slots or {}
+                slots: Dict[str, Any] = {}
+                variables = {
+                    "slots": slots,
+                    "satellite": {
+                        "entity_id": satellite_id,
+                        "device_id": (
+                            hass_info.satellite_devices.get(satellite_id)
+                            if hass_info and satellite_id
+                            else None
+                        ),
+                        "area_id": hass_info.current_area_id if hass_info else None,
+                        "floor_id": hass_info.current_floor_id if hass_info else None,
+                    },
+                }
+
+                if command.intent and command.intent.slots:
+                    slots.update(command.intent.slots)
                 if command_match.slots:
                     slots.update(command_match.slots)
-
                 if command.current_area:
                     slots.setdefault(command.current_area.slot, current_area_id)
 
+                if command.action:
+                    # Run action in Home Assistant.
+                    # Targets and data values are rendered as templates in Home
+                    # Assistant.
+                    action = command.action
+                    domain, service = action.action.split(".", maxsplit=1)
+                    action_data: Dict[str, Any] = {}
+                    action_target: Dict[str, Any] = {}
+
+                    if action.data:
+                        action_data = self.render_templates_recursive(
+                            action.data, variables
+                        )
+
+                    if action.target:
+                        action_target = self.render_templates_recursive(
+                            action.target, variables
+                        )
+
+                    _LOGGER.debug(
+                        "Running action: %s with target=%s, data=%s",
+                        action.action,
+                        action_target,
+                        action_data,
+                    )
+
+                    try:
+                        await self.hass.trigger_service(
+                            domain,
+                            service,
+                            service_data=action_data,
+                            target=action_target,
+                        )
+                    except Exception as err:
+                        _LOGGER.exception(err)
+                        await self.write_event(
+                            NotRecognized(
+                                text=f"Unexpected error running action: {err}",
+                                context=transcript.context,
+                            ).event()
+                        )
+                        return True
+
+                # Render response
                 response: Optional[str] = None
-                variables = {"slots": slots}
                 if command.response:
+                    # Render template locally
                     response = self._env.from_string(command.response).render(variables)
                 elif command.hass_response:
+                    # Render response template in Home Assistant
                     response = await self.hass.render_template(
                         command.hass_response, variables
                     )
 
-                await self.write_event(
-                    Intent(
-                        name=command.intent_name,
-                        entities=[Entity(name=k, value=v) for k, v in slots.items()],
-                        text=response,
-                        context=transcript.context,
-                    ).event()
-                )
+                if command.intent:
+                    # Intent recognized
+                    await self.write_event(
+                        Intent(
+                            name=command.intent.name,
+                            entities=[
+                                Entity(name=k, value=v) for k, v in slots.items()
+                            ],
+                            text=response,
+                            context=transcript.context,
+                        ).event()
+                    )
+                else:
+                    # Action handled
+                    await self.write_event(
+                        Handled(text=response, context=transcript.context).event()
+                    )
 
             return True
 
@@ -268,6 +339,47 @@ class WyomingEventHandler(AsyncEventHandler):
 
         self._info_event = info.event()
         await self.write_event(self._info_event)
+
+    def render_templates_recursive(
+        self, data: Any, variables: Mapping[str, Any]
+    ) -> Any:
+        # Template string handling
+        if isinstance(data, str) and is_template_string(data):
+            return self.render_template(data, variables)
+
+        # Mapping (dict-like)
+        if isinstance(data, Mapping):
+            return {
+                k: self.render_templates_recursive(v, variables)
+                for k, v in data.items()
+            }
+
+        # Sequence (but not str/bytes)
+        if isinstance(data, (list, tuple)):
+            rendered = [self.render_templates_recursive(v, variables) for v in data]
+            return rendered if isinstance(data, list) else tuple(rendered)
+
+        return data
+
+    def render_template(
+        self, template: str, variables: Optional[Mapping[str, Any]] = None
+    ) -> Any:
+        if variables is None:
+            variables = {}
+
+        _LOGGER.debug("Rendering template: '%s' with variables %s", template, variables)
+        result = self._env.from_string(template).render(**variables, min=min, max=max)
+        if isinstance(result, str):
+            result = " ".join(result.strip().split())
+
+        return result
+
+
+def is_template_string(maybe_template: str) -> bool:
+    """Check if the input is a Jinja2 template."""
+    return "{" in maybe_template and (
+        "{%" in maybe_template or "{{" in maybe_template or "{#" in maybe_template
+    )
 
 
 # -----------------------------------------------------------------------------

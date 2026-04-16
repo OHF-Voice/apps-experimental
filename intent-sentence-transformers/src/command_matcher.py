@@ -42,12 +42,25 @@ class PercentageInfo:
 
 
 @dataclass
+class CommandIntent:
+    name: str
+    slots: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class CommandAction:
+    action: str
+    target: Optional[Dict[str, Any]] = None
+    data: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class Command:
     id: str
     sentences: List[str]
-    intent_name: str
+    intent: Optional[CommandIntent] = None
+    action: Optional[CommandAction] = None
     description: Optional[str] = None
-    intent_slots: Optional[Dict[str, Any]] = None
     current_area: Optional[CurrentAreaInfo] = None
     duration: Optional[DurationInfo] = None
     percentage: Optional[PercentageInfo] = None
@@ -84,12 +97,36 @@ class Command:
         if percentage_value:
             percentage = PercentageInfo(slot=percentage_value["slot"])
 
+        # Parse intent
+        intent: Optional[CommandIntent] = None
+        intent_value = command_dict.get("intent")
+        if intent_value:
+            if isinstance(intent_value, str):
+                intent = CommandIntent(name=intent_value)
+            else:
+                intent = CommandIntent(
+                    name=intent_value["name"], slots=intent_value.get("slots")
+                )
+
+        # Parse action
+        action: Optional[CommandAction] = None
+        action_value = command_dict.get("action")
+        if action_value:
+            if isinstance(action_value, str):
+                action = CommandAction(action=action_value)
+            else:
+                action = CommandAction(
+                    action=action_value["action"],
+                    target=action_value.get("target"),
+                    data=action_value.get("data"),
+                )
+
         return Command(
             id=command_dict["id"],
             description=command_dict.get("description"),
             sentences=command_dict["sentences"],
-            intent_name=command_dict["intent"],
-            intent_slots=command_dict.get("slots"),
+            intent=intent,
+            action=action,
             current_area=current_area,
             duration=duration,
             percentage=percentage,
@@ -193,6 +230,7 @@ class CommandMatcher:
         self,
         language: str,
         text: str,
+        *,
         current_area_id: Optional[str] = None,
         threshold: float = DEFAULT_THRESHOLD,
         min_margin: float = DEFAULT_MARGIN,
