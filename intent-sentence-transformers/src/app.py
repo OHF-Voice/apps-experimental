@@ -12,10 +12,10 @@ import yaml
 from jinja2 import BaseLoader, Environment
 from wyoming.asr import Transcript
 from wyoming.event import Event
-from wyoming.info import (Attribution, Describe, Info, IntentModel,
-                          IntentProgram)
+from wyoming.info import Attribution, Describe, Info, IntentModel, IntentProgram
 from wyoming.intent import Entity, Intent, NotRecognized
 from wyoming.server import AsyncEventHandler, AsyncServer
+from wyoming.error import Error
 
 from hass_api import HomeAssistant
 
@@ -33,8 +33,10 @@ async def main() -> None:
     """Run app."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--uri", required=True, help="unix:// or tcp://")
-    parser.add_argument("--sentences", required=True)
-    parser.add_argument("--model")
+    parser.add_argument(
+        "--sentences", required=True, help="Path to sentences YAML file"
+    )
+    parser.add_argument("--model", help="HuggingFace id of sentence transformers model")
     #
     parser.add_argument(
         "--hass-token", required=True, help="Long-lived access token for Home Assistant"
@@ -54,7 +56,9 @@ async def main() -> None:
         help="Only look for model files locally",
     )
     #
-    parser.add_argument("--satellite-id")
+    parser.add_argument(
+        "--satellite-id", help="Satellite id to use if not provided by Home Assistant"
+    )
     #
     parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to console"
@@ -70,6 +74,7 @@ async def main() -> None:
 
     from command_matcher import Command, CommandMatcher
 
+    _LOGGER.debug("Loading sentences from %s", args.sentences)
     with open(args.sentences, "r", encoding="utf-8") as sentences_file:
         sentences_dict = yaml.safe_load(sentences_file)
         language = sentences_dict["language"]
@@ -81,6 +86,7 @@ async def main() -> None:
     else:
         model_name = "intfloat/multilingual-e5-small"
 
+    _LOGGER.debug("Loading model: %s", model_name)
     model = SentenceTransformer(
         model_name,
         cache_folder=(
@@ -88,6 +94,9 @@ async def main() -> None:
         ),
         local_files_only=args.model_local_files,
     )
+    _LOGGER.debug("Loaded model: %s", model_name)
+
+    _LOGGER.debug("Training command matcher")
     matcher = CommandMatcher(model)
 
     for command_dict in sentences_dict["commands"]:
@@ -170,14 +179,28 @@ class WyomingEventHandler(AsyncEventHandler):
                 hass_info = await self.hass.get_info(satellite_id=satellite_id)
                 current_area_id = hass_info.current_area_id
 
-            command_match = self.matcher.match(
-                self.language, transcript.text, current_area_id=current_area_id
-            )
+            try:
+                command_match = self.matcher.match(
+                    self.language, transcript.text, current_area_id=current_area_id
+                )
+            except Exception as err:
+                _LOGGER.exception(err)
+                await self.write_event(
+                    NotRecognized(
+                        text=f"Unexpected error during recognition: {err}",
+                        context=transcript.context,
+                    ).event()
+                )
+                return True
+
             _LOGGER.debug(command_match)
             if isinstance(command_match, CommandMatchFailure):
                 # Match failed
                 await self.write_event(
-                    NotRecognized(text=command_match.to_string()).event()
+                    NotRecognized(
+                        text=command_match.to_string(),
+                        context=transcript.context,
+                    ).event()
                 )
             elif isinstance(command_match, CommandMatch):
                 # Match succeeded
@@ -203,6 +226,7 @@ class WyomingEventHandler(AsyncEventHandler):
                         name=command.intent_name,
                         entities=[Entity(name=k, value=v) for k, v in slots.items()],
                         text=response,
+                        context=transcript.context,
                     ).event()
                 )
 

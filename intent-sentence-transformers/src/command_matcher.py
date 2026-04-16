@@ -11,13 +11,17 @@ import numpy as np
 from lingua_franca.parse import extract_duration, extract_number
 from sentence_transformers import SentenceTransformer
 
-_THRESHOLD = 0.85
-_MARGIN = 0.015
+DEFAULT_THRESHOLD = 0.85
+DEFAULT_MARGIN = 0.015
 
 _LOGGER = logging.getLogger()
 
-# for module in ("sentence_transformers", "transformers", "torch"):
-#     logging.getLogger(module).setLevel(logging.WARNING)
+for module in ("sentence_transformers", "transformers", "torch"):
+    logging.getLogger(module).setLevel(logging.WARNING)
+
+
+class ParseError(Exception):
+    pass
 
 
 @dataclass
@@ -49,6 +53,8 @@ class Command:
     percentage: Optional[PercentageInfo] = None
     response: Optional[str] = None
     hass_response: Optional[str] = None
+    score_threshold: Optional[float] = None
+    score_margin: Optional[float] = None
 
     @staticmethod
     def from_dict(command_dict: Dict[str, Any]) -> "Command":
@@ -58,6 +64,7 @@ class Command:
 
         current_area_value = command_dict.get("current_area")
         if current_area_value is True:
+            # Defaults
             current_area = CurrentAreaInfo()
         elif current_area_value:
             current_area = CurrentAreaInfo(slot=current_area_value["slot"])
@@ -88,6 +95,8 @@ class Command:
             percentage=percentage,
             response=command_dict.get("response"),
             hass_response=command_dict.get("hass_response"),
+            score_threshold=command_dict.get("score_threshold"),
+            score_margin=command_dict.get("score_margin"),
         )
 
 
@@ -117,6 +126,9 @@ class CommandMatchFailure:
     best_score: Optional[float] = None
     second_best_command: Optional[Command] = None
     second_best_score: Optional[float] = None
+    threshold: Optional[float] = None
+    min_margin: Optional[float] = None
+    margin: Optional[float] = None
 
     def to_string(self) -> str:
         text = ""
@@ -128,12 +140,20 @@ class CommandMatchFailure:
             text += "matched command was below threshold"
             if self.best_command:
                 text += f", command={self.best_command.id}"
+            if self.best_score is not None:
+                text += f", score={self.best_score}"
+            if self.threshold is not None:
+                text += f", threshold={self.threshold}"
         elif self.reason == CommandMatchFailureReason.BELOW_MARGIN:
             text += "matched command was too close to another command"
             if self.best_command:
                 text += f", command={self.best_command.id}"
             if self.second_best_command:
                 text += f", other_command={self.second_best_command.id}"
+            if self.margin is not None:
+                text += f", margin={self.margin}"
+            if self.min_margin is not None:
+                text += f", min_margin={self.min_margin}"
 
         return text
 
@@ -174,18 +194,20 @@ class CommandMatcher:
         language: str,
         text: str,
         current_area_id: Optional[str] = None,
-        threshold: float = _THRESHOLD,
-        min_margin: float = _MARGIN,
+        threshold: float = DEFAULT_THRESHOLD,
+        min_margin: float = DEFAULT_MARGIN,
         disabled_commands: Optional[Collection[str]] = None,
     ) -> Union[CommandMatch, CommandMatchFailure]:
         if (not self.commands) or (self.centroids is None):
             return CommandMatchFailure(CommandMatchFailureReason.NO_COMMANDS)
 
         _LOGGER.debug(
-            "Matching '%s' (threshold=%s, min_margin=%s, disabled_commands=%s)",
+            "Matching '%s' (language=%s, threshold=%s, min_margin=%s, current_area_id=%s, disabled_commands=%s)",
             text,
+            language,
             threshold,
             min_margin,
+            current_area_id,
             disabled_commands,
         )
 
@@ -205,29 +227,60 @@ class CommandMatcher:
         for order_idx, best_idx in enumerate(order):
             best_score = float(sims[best_idx])
             best_command = self.commands[best_idx]
-            if best_score < threshold:
+
+            if best_command.score_threshold is not None:
+                # Command has specific threshold
+                best_command_threshold = best_command.score_threshold
+            else:
+                best_command_threshold = threshold
+
+            if best_score < best_command_threshold:
                 # Below threshold
                 _LOGGER.debug(
                     "Command was below threshold: text=%s, score=%s, threshold=%s",
                     text,
                     best_score,
-                    threshold,
+                    best_command_threshold,
                 )
                 return CommandMatchFailure(
-                    CommandMatchFailureReason.BELOW_THRESHOLD, best_command=best_command
+                    CommandMatchFailureReason.BELOW_THRESHOLD,
+                    best_command=best_command,
+                    best_score=best_score,
+                    threshold=best_command_threshold,
                 )
 
             if disabled_commands and (best_command.id in disabled_commands):
+                # Command is disabled
                 _LOGGER.debug("Matched '%s' but is was disabled", best_command.id)
                 continue
 
             if best_command.current_area and (not current_area_id):
+                # Command requires current area, which is not present
                 _LOGGER.debug("Matched '%s' but no current area", best_command.id)
                 continue
 
             # TODO: return error if number/duration missing
+            match_slots: Dict[str, Any] = {}
+            try:
+                if best_command.duration:
+                    match_slots.update(
+                        parse_duration(language, text, best_command.duration)
+                    )
+                elif best_command.percentage:
+                    match_slots.update(
+                        parse_number(language, text, best_command.percentage.slot)
+                    )
+            except ParseError as err:
+                _LOGGER.debug("Matched '%s' but %s", best_command.id, err)
+                continue
 
             # Check how close this command was to the next one
+            if best_command.score_margin is not None:
+                # Command has specific margin
+                best_min_margin = best_command.score_margin
+            else:
+                best_min_margin = min_margin
+
             margin: Optional[float] = None
             second_order_idx = order_idx + 1
             while second_order_idx < len(order):
@@ -235,21 +288,23 @@ class CommandMatcher:
                 second_best_command = self.commands[second_best_idx]
                 second_order_idx += 1
                 if disabled_commands and (second_best_command.id in disabled_commands):
+                    # Command is disabled
                     continue
 
                 if second_best_command.current_area and (not current_area_id):
+                    # Command requires current area, which is not present
                     continue
 
                 second_best_score = float(sims[second_best_idx])
                 margin = best_score - second_best_score
-                if margin < min_margin:
+                if margin < best_min_margin:
                     # Too close to other command
                     _LOGGER.debug(
                         "Matched '%s' but it was too close to '%s' (margin=%s, min_margin=%s)",
                         best_command.id,
                         second_best_command.id,
                         margin,
-                        min_margin,
+                        best_min_margin,
                     )
                     return CommandMatchFailure(
                         CommandMatchFailureReason.BELOW_MARGIN,
@@ -257,21 +312,15 @@ class CommandMatcher:
                         best_score=best_score,
                         second_best_command=second_best_command,
                         second_best_score=second_best_score,
+                        threshold=best_command_threshold,
+                        margin=margin,
+                        min_margin=best_min_margin,
                     )
 
             # Run extractors
-            match_slots: Dict[str, Any] = {}
             command_match = CommandMatch(
                 best_command, slots=match_slots, score=best_score, margin=margin
             )
-            if best_command.duration:
-                match_slots.update(
-                    parse_duration(language, text, best_command.duration)
-                )
-            elif best_command.percentage:
-                match_slots.update(
-                    parse_number(language, text, best_command.percentage.slot)
-                )
 
             return command_match
 
@@ -302,20 +351,22 @@ def parse_duration(
     text = text.replace("-", " ")
 
     result = extract_duration(text, lang=language)
-    if result and result[0]:
-        duration: datetime.timedelta = result[0]
-        total_seconds = int(duration.total_seconds())
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
+    if (not result) or (not result[0]):
+        raise ParseError("no duration")
 
-        if hours > 0:
-            data[info.hours_slot] = hours
+    duration: datetime.timedelta = result[0]
+    total_seconds = int(duration.total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
 
-        if minutes > 0:
-            data[info.minutes_slot] = minutes
+    if hours > 0:
+        data[info.hours_slot] = hours
 
-        if seconds > 0:
-            data[info.seconds_slot] = seconds
+    if minutes > 0:
+        data[info.minutes_slot] = minutes
+
+    if seconds > 0:
+        data[info.seconds_slot] = seconds
 
     return data
 
@@ -331,6 +382,6 @@ def parse_number(language: str, text: str, slot: str) -> Dict[str, Any]:
 
     result = extract_number(text, lang=language)
     if result is False:
-        return {}
+        raise ParseError("no number")
 
     return {slot: result}
