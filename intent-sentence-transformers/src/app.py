@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 
 import argparse
-import threading
 import asyncio
 import logging
+import threading
 import time
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+import voluptuous as vol
 import yaml
+from flask import Flask, jsonify, render_template, request, url_for
 from jinja2 import BaseLoader, Environment
+from voluptuous.humanize import humanize_error
+from werkzeug.middleware.proxy_fix import ProxyFix
 from wyoming.asr import Transcript
 from wyoming.event import Event
 from wyoming.handle import Handled
 from wyoming.info import Attribution, Describe, Info, IntentModel, IntentProgram
 from wyoming.intent import Entity, Intent, NotRecognized
 from wyoming.server import AsyncEventHandler, AsyncServer
-from flask import Flask, jsonify, render_template, request, url_for
-from werkzeug.middleware.proxy_fix import ProxyFix
-import voluptuous as vol
-from voluptuous.humanize import humanize_error
 
 from hass_api import HomeAssistant, InfoForRecognition
 
@@ -266,6 +266,7 @@ class WyomingEventHandler(AsyncEventHandler):
                         "area_name": hass_info.current_area_name if hass_info else None,
                         "floor_id": hass_info.current_floor_id if hass_info else None,
                     },
+                    "lists": command.list_values or {},
                 }
 
                 if command.intent and command.intent.slots:
@@ -440,7 +441,7 @@ def get_app(state: State) -> Flask:
 
     @flask_app.context_processor
     def inject_url_for():
-        return dict(url_for=url_for)
+        return dict(url_for=url_for)  # pylint: disable=use-dict-literal
 
     @flask_app.route("/", methods=["GET"])
     def index():

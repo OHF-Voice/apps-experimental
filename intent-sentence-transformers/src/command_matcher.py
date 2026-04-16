@@ -1,10 +1,12 @@
 """Command matcher that uses sentence transformers (fuzzy)."""
 
 import datetime
+import itertools
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from enum import Enum, auto
-from typing import Any, Collection, Dict, List, Optional, Union
+from typing import Any, Collection, Dict, List, Optional, Set, Union
 
 import lingua_franca
 import numpy as np
@@ -18,6 +20,8 @@ DEFAULT_THRESHOLD = 0.9
 # If the two command scores' difference is below this margin, the match is
 # rejected.
 DEFAULT_MARGIN = 0.015
+
+_LIST_PATTERN = re.compile(r"\{([^}]+)\}")
 
 _LOGGER = logging.getLogger()
 
@@ -45,6 +49,13 @@ PercentageSchema = {
     vol.Required("slot"): str,
 }
 
+SentenceListSchema = {
+    vol.Required("name"): str,
+    vol.Required("values"): [
+        vol.Any(str, {vol.Required("in"): str, vol.Required("out"): str})
+    ],
+}
+
 CommandSchema = {
     vol.Required("id"): str,
     vol.Required("sentences"): [str],
@@ -57,6 +68,7 @@ CommandSchema = {
     vol.Optional("percentage"): PercentageSchema,
     vol.Optional("response"): str,
     vol.Optional("hass_response"): str,
+    vol.Optional("sentence_lists"): SentenceListSchema,
 }
 
 
@@ -108,6 +120,29 @@ class CommandAction:
     data: Optional[Dict[str, Any]] = None
 
 
+@dataclass
+class SentenceListValue:
+    in_value: str
+    out_value: Optional[Any] = None
+
+    @property
+    def text(self) -> str:
+        return self.in_value
+
+    @property
+    def value(self) -> str:
+        if self.out_value is None:
+            return self.in_value
+
+        return self.out_value
+
+    def __str__(self) -> str:
+        return self.value
+
+    def __repr__(self) -> str:
+        return self.value
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -125,6 +160,8 @@ class Command:
     hass_response: Optional[str] = None
     score_threshold: Optional[float] = None
     score_margin: Optional[float] = None
+    sentence_lists: Optional[Dict[str, List[SentenceListValue]]] = None
+    list_values: Optional[Dict[str, Any]] = None
 
     @staticmethod
     def from_dict(command_dict: Dict[str, Any]) -> "Command":
@@ -178,6 +215,22 @@ class Command:
                     data=action_value.get("data"),
                 )
 
+        sentence_lists: Optional[Dict[str, List[SentenceListValue]]] = None
+        sentence_lists_value = command_dict.get("sentence_lists")
+        if sentence_lists_value:
+            sentence_lists = {}
+            for list_name, list_values in sentence_lists_value.items():
+                sentence_lists[list_name] = [
+                    (
+                        SentenceListValue(in_value=value)
+                        if isinstance(value, str)
+                        else SentenceListValue(
+                            in_value=value["in"], out_value=value.get("out")
+                        )
+                    )
+                    for value in list_values
+                ]
+
         return Command(
             id=command_dict["id"],
             description=command_dict.get("description"),
@@ -191,6 +244,7 @@ class Command:
             hass_response=command_dict.get("hass_response"),
             score_threshold=command_dict.get("score_threshold"),
             score_margin=command_dict.get("score_margin"),
+            sentence_lists=sentence_lists,
         )
 
 
@@ -262,12 +316,34 @@ class CommandMatcher:
         self.centroids: Optional[np.ndarray] = None
 
     def reset(self) -> None:
-        self.commands: List[Command] = []
-        self.centroids: Optional[np.ndarray] = None
+        self.commands = []
+        self.centroids = None
 
     def add(self, command: Command) -> None:
         if not command.sentences:
             raise ValueError("Invalid command")
+
+        if command.sentence_lists:
+            for sentence_idx, sentence in enumerate(command.sentences, start=1):
+                list_names = set(_LIST_PATTERN.findall(sentence))
+                list_values = [command.sentence_lists[name] for name in list_names]
+                for values in itertools.product(*list_values):
+                    mapping = dict(zip(list_names, values))
+                    # pylint: disable=cell-var-from-loop
+                    expanded_sentence = _LIST_PATTERN.sub(
+                        lambda m: mapping[m.group(1)].in_value, sentence
+                    )
+                    _LOGGER.debug("Expanded command: %s", expanded_sentence)
+                    expanded_command: Command = replace(
+                        command,
+                        id=f"{command.id}_{sentence_idx}",
+                        sentences=[expanded_sentence],
+                        sentence_lists=None,  # stop recursion
+                        list_values=mapping,
+                    )
+                    self.add(expanded_command)
+
+            return
 
         # Encode all examples for this command
         # normalize_embeddings=True gives unit vectors out of the box,

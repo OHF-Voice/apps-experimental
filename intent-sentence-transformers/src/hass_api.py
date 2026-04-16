@@ -81,9 +81,7 @@ class HomeAssistant:
                 )
                 msg = await websocket.receive_json()
                 assert msg["success"], msg
-                areas = {
-                    area_info["area_id"]: area_info for area_info in msg["result"]
-                }
+                areas = {area_info["area_id"]: area_info for area_info in msg["result"]}
 
                 # Devices
                 await websocket.send_json(

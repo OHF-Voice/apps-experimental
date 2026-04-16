@@ -96,6 +96,41 @@ The following variables are available in templates:
     - `area_name` - name of the satellite device's area
     - `floor_id` - floor id of satellite device area
     
+### Lists
+
+```yaml
+  - id: "Turn on by name"
+    action:
+      action: "light.turn_on"
+      target:
+        entity_id: "{{ lists.name }}"
+    description: "test command"
+    sentences:
+      - "turn on {name}"
+    sentence_lists:
+      name:
+        - in: light 1
+          out: light.bed_light
+        - in: light 2
+          out: light.office_rgbw_lights
+    response: "Turned on {{ lists.name.text }}"
+
+  - id: "Turn off by name"
+    action:
+      action: "light.turn_off"
+      target:
+        entity_id: "{{ lists.name }}"
+    description: "test command"
+    sentences:
+      - "turn off {name}"
+    sentence_lists:
+      name:
+        - in: light 1
+          out: light.bed_light
+        - in: light 2
+          out: light.office_rgbw_lights
+    response: "Turned off {{ lists.name.text }}"
+```
     
 <!-- Links -->
 [sentence_transformers]: https://huggingface.co/sentence-transformers
