@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import argparse
+import threading
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from collections.abc import Mapping
 from functools import partial
 from pathlib import Path
@@ -17,6 +19,10 @@ from wyoming.handle import Handled
 from wyoming.info import Attribution, Describe, Info, IntentModel, IntentProgram
 from wyoming.intent import Entity, Intent, NotRecognized
 from wyoming.server import AsyncEventHandler, AsyncServer
+from flask import Flask, jsonify, render_template, request, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
+import voluptuous as vol
+from voluptuous.humanize import humanize_error
 
 from hass_api import HomeAssistant, InfoForRecognition
 
@@ -26,6 +32,26 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
+
+
+@dataclass
+class State:
+    language: str
+    model_name: str
+    sentences_path: Path
+    matcher: "CommandMatcher"
+
+    def train(self) -> None:
+        from command_matcher import Command
+
+        with open(self.sentences_path, "r", encoding="utf-8") as sentences_file:
+            sentences_dict = yaml.safe_load(sentences_file)
+            self.language = sentences_dict["language"]
+
+        self.matcher.reset()
+        for command_dict in sentences_dict["commands"]:
+            self.matcher.add(Command.from_dict(command_dict))
+
 
 # -----------------------------------------------------------------------------
 
@@ -61,6 +87,9 @@ async def main() -> None:
         "--satellite-id", help="Satellite id to use if not provided by Home Assistant"
     )
     #
+    parser.add_argument("--http-host", default="127.0.0.1", help="Host for web UI")
+    parser.add_argument("--http-port", default=5000, type=int, help="Port for web UI")
+    #
     parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to console"
     )
@@ -75,8 +104,9 @@ async def main() -> None:
 
     from command_matcher import Command, CommandMatcher
 
-    _LOGGER.debug("Loading sentences from %s", args.sentences)
-    with open(args.sentences, "r", encoding="utf-8") as sentences_file:
+    sentences_path = Path(args.sentences)
+    _LOGGER.debug("Loading sentences from %s", sentences_path)
+    with open(sentences_path, "r", encoding="utf-8") as sentences_file:
         sentences_dict = yaml.safe_load(sentences_file)
         language = sentences_dict["language"]
 
@@ -97,11 +127,26 @@ async def main() -> None:
     )
     _LOGGER.debug("Loaded model: %s", model_name)
 
-    _LOGGER.debug("Training command matcher")
     matcher = CommandMatcher(model)
+    state = State(
+        language=language,
+        model_name=model_name,
+        sentences_path=sentences_path,
+        matcher=matcher,
+    )
+    try:
+        state.train()
+    except Exception:
+        _LOGGER.exception("Unexpected error while training")
 
-    for command_dict in sentences_dict["commands"]:
-        matcher.add(Command.from_dict(command_dict))
+    # Run web UI
+    flask_app = get_app(state)
+
+    def run_flask():
+        flask_app.run(host=args.http_host, port=args.http_port, use_reloader=False)
+
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
 
     server = AsyncServer.from_uri(args.uri)
     _LOGGER.info("Ready")
@@ -218,6 +263,7 @@ class WyomingEventHandler(AsyncEventHandler):
                             else None
                         ),
                         "area_id": hass_info.current_area_id if hass_info else None,
+                        "area_name": hass_info.current_area_name if hass_info else None,
                         "floor_id": hass_info.current_floor_id if hass_info else None,
                     },
                 }
@@ -380,6 +426,89 @@ def is_template_string(maybe_template: str) -> bool:
     return "{" in maybe_template and (
         "{%" in maybe_template or "{{" in maybe_template or "{#" in maybe_template
     )
+
+
+# -----------------------------------------------------------------------------
+
+
+def get_app(state: State) -> Flask:
+    flask_app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
+    flask_app.secret_key = "4771e33e-7b08-4ae7-8f36-05d4558cfd02"
+
+    flask_app.wsgi_app = ProxyFix(flask_app.wsgi_app, x_proto=1, x_host=1)  # type: ignore[method-assign]
+    flask_app.wsgi_app = IngressPrefixMiddleware(flask_app.wsgi_app)  # type: ignore[method-assign]
+
+    @flask_app.context_processor
+    def inject_url_for():
+        return dict(url_for=url_for)
+
+    @flask_app.route("/", methods=["GET"])
+    def index():
+        content = state.sentences_path.read_text(encoding="utf-8")
+        return render_template("index.html", content=content)
+
+    @flask_app.post("/save")
+    def save():
+        from command_matcher import Schema
+
+        text = request.get_data(as_text=True)
+
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as err:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "error": f"YAML parse error: {err}",
+                    }
+                ),
+                400,
+            )
+
+        try:
+            data = Schema(data)
+        except vol.Invalid as err:
+            err_text = (humanize_error(data, err),)
+            _LOGGER.error(
+                "Invalid sentences: %s",
+                err_text,
+            )
+            return (
+                jsonify({"ok": False, "error": err_text}),
+                400,
+            )
+
+        # Retrain
+        state.sentences_path.write_text(text, encoding="utf-8")
+        _LOGGER.info("Retraining...")
+        try:
+            state.train()
+            _LOGGER.debug("Training finished")
+        except Exception as err:
+            _LOGGER.exception("Unexpected error while training")
+            return (
+                jsonify({"ok": False, "error": str(err)}),
+                400,
+            )
+
+        return jsonify({"ok": True})
+
+    return flask_app
+
+
+class IngressPrefixMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    def __call__(self, environ, start_response):
+        ingress_path = environ.get("HTTP_X_INGRESS_PATH", "")
+        if ingress_path:
+            environ["SCRIPT_NAME"] = ingress_path
+            path_info = environ.get("PATH_INFO", "")
+            if path_info.startswith(ingress_path):
+                environ["PATH_INFO"] = path_info[len(ingress_path) :] or "/"
+        return self.app(environ, start_response)
 
 
 # -----------------------------------------------------------------------------

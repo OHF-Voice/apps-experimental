@@ -8,13 +8,67 @@ from typing import Any, Collection, Dict, List, Optional, Union
 
 import lingua_franca
 import numpy as np
+import voluptuous as vol
 from lingua_franca.parse import extract_duration, extract_number
 from sentence_transformers import SentenceTransformer
 
-DEFAULT_THRESHOLD = 0.85
+# Commands with scores below are rejected.
+DEFAULT_THRESHOLD = 0.9
+
+# If the two command scores' difference is below this margin, the match is
+# rejected.
 DEFAULT_MARGIN = 0.015
 
 _LOGGER = logging.getLogger()
+
+
+# ---------------------------------------------------------------------------
+
+IntentSchema = vol.Any(
+    str,
+    {
+        vol.Required("name"): str,
+        vol.Optional("slots"): {str: vol.Any(str, int, float, bool)},
+    },
+)
+
+DurationSchema = vol.Any(
+    str,
+    {
+        vol.Optional("seconds_slot"): str,
+        vol.Optional("minutes_slot"): str,
+        vol.Optional("hours_slot"): str,
+    },
+)
+
+PercentageSchema = {
+    vol.Required("slot"): str,
+}
+
+CommandSchema = {
+    vol.Required("id"): str,
+    vol.Required("sentences"): [str],
+    vol.Optional("intent"): IntentSchema,
+    vol.Optional("description"): str,
+    vol.Optional("threshold"): float,
+    vol.Optional("margin"): float,
+    vol.Optional("duration"): bool,
+    vol.Optional("current_area"): bool,
+    vol.Optional("percentage"): PercentageSchema,
+    vol.Optional("response"): str,
+    vol.Optional("hass_response"): str,
+}
+
+
+Schema = vol.Schema(
+    {
+        vol.Required("language"): str,
+        vol.Required("commands"): [CommandSchema],
+    },
+    # extra=vol.ALLOW_EXTRA,
+)
+
+# -----------------------------------------------------------------------------
 
 for module in ("sentence_transformers", "transformers", "torch"):
     logging.getLogger(module).setLevel(logging.WARNING)
@@ -52,6 +106,9 @@ class CommandAction:
     action: str
     target: Optional[Dict[str, Any]] = None
     data: Optional[Dict[str, Any]] = None
+
+
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -195,9 +252,16 @@ class CommandMatchFailure:
         return text
 
 
+# ---------------------------------------------------------------------------
+
+
 class CommandMatcher:
     def __init__(self, model: SentenceTransformer) -> None:
         self.model = model
+        self.commands: List[Command] = []
+        self.centroids: Optional[np.ndarray] = None
+
+    def reset(self) -> None:
         self.commands: List[Command] = []
         self.centroids: Optional[np.ndarray] = None
 
@@ -369,6 +433,8 @@ def l2_normalize(x: np.ndarray, axis: int = -1, eps: float = 1e-12) -> np.ndarra
     norm = np.linalg.norm(x, axis=axis, keepdims=True)
     return x / np.maximum(norm, eps)
 
+
+# ---------------------------------------------------------------------------
 
 _LOADED_LANGS = set()
 

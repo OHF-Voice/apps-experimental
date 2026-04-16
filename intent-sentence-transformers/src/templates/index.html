@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Voice Commands</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/material-darker.min.css">
+
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: sans-serif;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid #ccc;
+      flex: 0 0 auto;
+    }
+
+    #editor-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    .CodeMirror {
+      height: 100%;
+      font-size: 14px;
+    }
+
+    #message {
+      padding: 8px 12px;
+      min-height: 1.5em;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button id="save-btn">Save</button>
+    <span id="status">Ready</span>
+    <br />
+    <span id="message"></span>
+  </div>
+
+  <div id="editor-wrap">
+    <textarea id="editor">{{ content }}</textarea>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/yaml/yaml.min.js"></script>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const messageEl = document.getElementById("message");
+
+    const editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
+      mode: "yaml",
+      lineNumbers: true,
+      lineWrapping: false,
+      indentUnit: 2,
+      tabSize: 2,
+      theme: "material-darker",
+      foldGutter: false
+    });
+
+    async function saveYaml() {
+      statusEl.textContent = "Saving...";
+      messageEl.textContent = "";
+
+      try {
+        const resp = await fetch("/save", {
+          method: "POST",
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8"
+          },
+          body: editor.getValue()
+        });
+
+        const result = await resp.json();
+
+        if (resp.ok && result.ok) {
+          statusEl.textContent = "Saved";
+          messageEl.textContent = "";
+        } else {
+          statusEl.textContent = "Invalid";
+          messageEl.textContent = result.error || "Save failed";
+        }
+      } catch (err) {
+        statusEl.textContent = "Request failed";
+        messageEl.textContent = String(err);
+      }
+    }
+
+    document.getElementById("save-btn").addEventListener("click", saveYaml);
+    editor.refresh();
+  </script>
+</body>
+</html>

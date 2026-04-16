@@ -10,6 +10,7 @@ class InfoForRecognition:
     """Information gathered from Home Assistant for intent recognition."""
 
     current_area_id: Optional[str]
+    current_area_name: Optional[str]
     current_floor_id: Optional[str]
     satellite_devices: Dict[str, str]
 
@@ -53,6 +54,7 @@ class HomeAssistant:
             return current_id
 
         current_area_id: Optional[str] = None
+        current_area_name: Optional[str] = None
         current_floor_id: Optional[str] = None
 
         async with aiohttp.ClientSession() as session:
@@ -79,6 +81,9 @@ class HomeAssistant:
                 )
                 msg = await websocket.receive_json()
                 assert msg["success"], msg
+                areas = {
+                    area_info["area_id"]: area_info for area_info in msg["result"]
+                }
 
                 # Devices
                 await websocket.send_json(
@@ -150,8 +155,14 @@ class HomeAssistant:
                         if device_id:
                             satellite_devices[entity_id] = device_id
 
+                if current_area_id:
+                    area = areas.get(current_area_id)
+                    if area:
+                        current_area_name = area["name"]
+
         return InfoForRecognition(
             current_area_id=current_area_id,
+            current_area_name=current_area_name,
             current_floor_id=current_floor_id,
             satellite_devices=satellite_devices,
         )

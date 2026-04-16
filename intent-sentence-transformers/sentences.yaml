@@ -10,6 +10,7 @@ commands:
     description: "get current date"
     sentences:
       - "what's the date"
+    threshold: 0.85
     hass_response: |
       {% set day = now().day %}
       {% set suffix = 'th' %}
@@ -28,6 +29,7 @@ commands:
   - id: "current_time"
     intent: HassGetCurrentTime
     description: "get current time"
+    threshold: 0.85
     sentences:
       - "what time is it"
     hass_response: |
@@ -86,7 +88,7 @@ commands:
     current_area: true
     sentences:
       - "turn on the lights"
-    response: "Turning on the lights."
+    response: "Turning on the lights in the {{ satellite.area_name }}."
 
   - id: "turn_off_lights"
     intent:
@@ -97,7 +99,7 @@ commands:
     current_area: true
     sentences:
       - "turn off the lights"
-    response: "Turning off the lights."
+    response: "Turning off the lights in the {{ satellite.area_name }}."
 
   - id: "set_brightness_lights"
     intent: HassLightSet
@@ -108,7 +110,7 @@ commands:
     sentences:
       - "set brightness to 10 percent"
     response: |
-      Setting brightness to {{ slots.brightness }} percent.
+      Setting brightness of lights in the {{ satellite.area_name }} to {{ slots.brightness }} percent.
 
   # ---------------------------------------------------------------------------
   # Media
