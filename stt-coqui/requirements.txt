@@ -1,3 +1,4 @@
 aiohttp
 flask[async]
+icu-rbnf
 wyoming[zeroconf]

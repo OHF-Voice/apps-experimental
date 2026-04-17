@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 
 import argparse
-import itertools
-import math
 import asyncio
+import itertools
 import logging
-import struct
+import math
+import platform
 import shlex
 import shutil
+import struct
 import tarfile
 import tempfile
 import threading
 import time
 import unicodedata
-import wave
-import platform
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Union
@@ -28,15 +27,15 @@ from wyoming.event import Event
 from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info
 from wyoming.server import AsyncEventHandler, AsyncServer
 
+from hassil_fst import EPS, SPACE, TEMPLATE_CHARS, templates_to_fst
+
 if TYPE_CHECKING:
     from nemo.collections.asr.models import ASRModel
 
 _LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
-EPS = "<eps>"
 BLANK = "<blank>"
-SPACE = "<space>"
 
 IS_ARM64 = platform.machine().lower() in ("arm64", "aarch64")
 
@@ -110,7 +109,9 @@ async def main() -> None:
         required=True,
         help=f"Coqui model language or directory ({', '.join(SUPPORTED_LANGUAGES)})",
     )
-    parser.add_argument("--language", help="Provide model language if using a directory")
+    parser.add_argument(
+        "--language", help="Provide model language if using a directory"
+    )
     parser.add_argument(
         "--sentences", required=True, help="Path to sentences text file"
     )
@@ -127,6 +128,9 @@ async def main() -> None:
 
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
     _LOGGER.debug(args)
+
+    exe_ext = "arm64" if IS_ARM64 else "x86_64"
+    exe_path = BASE_DIR / "bin" / f"stt_onlyprobs.{exe_ext}"
 
     # Ensure directories exist
     cache_dir = Path(args.cache_dir)
@@ -153,7 +157,7 @@ async def main() -> None:
         sentences_path.write_text("what time is it\n", encoding="utf-8")
 
     # Run web UI
-    flask_app = get_app(model_dir, train_dir, sentences_path)
+    flask_app = get_app(model_dir, train_dir, sentences_path, language)
 
     def run_flask():
         flask_app.run(host=args.http_host, port=args.http_port, use_reloader=False)
@@ -163,14 +167,16 @@ async def main() -> None:
 
     # Train and start Wyoming server
     _LOGGER.info("Training started")
-    await train(model_dir, train_dir, sentences_path)
+    await train(model_dir, train_dir, sentences_path, language)
     _LOGGER.info("Training finished")
 
     server = AsyncServer.from_uri(args.uri)
     _LOGGER.info("Ready")
 
     try:
-        await server.run(partial(WyomingEventHandler, model_dir, language, train_dir))
+        await server.run(
+            partial(WyomingEventHandler, model_dir, language, train_dir, exe_path)
+        )
     except KeyboardInterrupt:
         pass
 
@@ -186,6 +192,7 @@ class WyomingEventHandler(AsyncEventHandler):
         model_dir: Path,
         language: str,
         train_dir: Path,
+        exe_path: Path,
         *args,
         **kwargs,
     ) -> None:
@@ -196,10 +203,9 @@ class WyomingEventHandler(AsyncEventHandler):
         self.model_dir = model_dir
         self.language = language
         self.train_dir = train_dir
+        self.exe_path = exe_path
 
-        self._wav_file: Optional[wave.Wave_write] = None
-        self._wav_path = train_dir / f"{self.client_id}.wav"
-
+        self._proc: "Optional[asyncio.subprocess.Process]" = None
         self._info_event: Optional[Event] = None
 
     async def handle_event(self, event: Event) -> bool:
@@ -218,22 +224,49 @@ class WyomingEventHandler(AsyncEventHandler):
             return True
 
         if AudioChunk.is_type(event.type):
-            chunk = AudioChunk.from_event(event)
-            if self._wav_file is None:
+            if self._proc is None:
                 _LOGGER.debug("Receiving audio")
-                self._wav_file = wave.open(str(self._wav_path), "wb")
-                self._wav_file.setframerate(chunk.rate)
-                self._wav_file.setsampwidth(chunk.width)
-                self._wav_file.setnchannels(chunk.channels)
+                self._proc = await asyncio.create_subprocess_exec(
+                    str(self.exe_path),
+                    str(self.model_dir / "model.tflite"),
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
 
-            self._wav_file.writeframes(chunk.audio)
+            chunk = AudioChunk.from_event(event)
+
+            # Write chunk size (4 bytes), then chunk
+            assert self._proc is not None
+            assert self._proc.stdin is not None
+
+            self._proc.stdin.write(struct.pack("I", len(chunk.audio)))
+            self._proc.stdin.write(chunk.audio)
+            await self._proc.stdin.drain()
+
         elif AudioStop.is_type(event.type):
-            assert self._wav_file is not None
-            self._wav_file.close()
+            assert self._proc is not None
+            assert self._proc.stdin is not None
+            assert self._proc.stdout is not None
 
-            _LOGGER.debug("Transcribing %s", self._wav_path)
+            _LOGGER.debug("Transcribing...")
             start_time = time.monotonic()
-            text = await transcribe(self.model_dir, self.train_dir, self._wav_path)
+
+            # Zero-length chunk signals end
+            self._proc.stdin.write(struct.pack("I", 0))
+            await self._proc.stdin.drain()
+
+            line = (await self._proc.stdout.readline()).decode().strip()
+            probs: List[List[float]] = []
+            while line:
+                probs.append([float(p) for p in line.split()])
+                line = (await self._proc.stdout.readline()).decode().strip()
+
+            self._proc.terminate()
+            await self._proc.wait()
+
+            text = await transcribe(self.train_dir, probs)
+
             end_time = time.monotonic()
             _LOGGER.debug("Transcribed in %s second(s)", end_time - start_time)
 
@@ -243,9 +276,7 @@ class WyomingEventHandler(AsyncEventHandler):
                 Transcript(text=text, language=self.language).event()
             )
 
-            # Reset
-            self._wav_path.unlink(missing_ok=True)
-            self._wav_file = None
+            self._proc = None
 
         return True
 
@@ -326,7 +357,9 @@ async def download_model(model_id: str, cache_dir: Path) -> Path:
     return model_dir
 
 
-async def train(model_dir: Path, train_dir: Path, sentences_path: Path) -> None:
+async def train(
+    model_dir: Path, train_dir: Path, sentences_path: Path, language: str
+) -> None:
     idx2char: Dict[int, str] = {}
     char2idx: Dict[str, int] = {}
 
@@ -428,54 +461,49 @@ async def train(model_dir: Path, train_dir: Path, sentences_path: Path) -> None:
     with open(sentences_path, "r", encoding="utf-8") as sentences_file, open(
         char2sen_txt, "w", encoding="utf-8"
     ) as char2sen_file:
-        start_state = 0
-        current_state = 1
-
+        templates = []
         warned_chars: Set[str] = set()
         for line in sentences_file:
-            line = line.strip()
-            if not line:
-                continue
-
             # Normalize
+            original_line = line
+            line = line.strip()
             line = unicodedata.normalize("NFC", line)
             line = line.lower()
-
-            chars_to_use: List[str] = []
+            chars = []
+            in_list_name = False
             for char in line:
-                nfd_c = unicodedata.normalize("NFD", char)
-                unusable_chars: List[str] = []
-                for c in nfd_c:
-                    if c == " ":
-                        c = SPACE
+                if (char == " ") and (not in_list_name):
+                    char = SPACE
 
-                    if c in char2idx:
-                        chars_to_use.append(c)
-                    else:
-                        unusable_chars.append(c)
+                if (char == "{") and (not in_list_name):
+                    in_list_name = True
+                elif (char == "}") and in_list_name:
+                    in_list_name = False
+                elif in_list_name:
+                    chars.append(char)
+                elif (char in char2idx) or (char in TEMPLATE_CHARS):
+                    chars.append(char)
+                elif char not in warned_chars:
+                    _LOGGER.warning("Skipping '%s' in '%s'", char, line)
+                    warned_chars.add(char)
 
-                for c in unusable_chars:
-                    # None of the decomposed characters could be used
-                    if c not in warned_chars:
-                        _LOGGER.warning("Skipping '%s' in '%s'", c, line)
-                        warned_chars.add(c)
-
-            if not chars_to_use:
+            line = line.strip()
+            if not line:
+                _LOGGER.warning("Skipped line with no valid chars: %s", original_line)
                 continue
 
-            print(start_state, current_state, EPS, file=char2sen_file)
-            for char in chars_to_use:
-                print(current_state, current_state + 1, char, file=char2sen_file)
-                current_state += 1
+            templates.append(line)
+            _LOGGER.debug(line)
 
-            print(current_state, file=char2sen_file)
+        fst = templates_to_fst(templates, language)
+        fst.write(char2sen_file)
 
     char2sen_fst = train_dir / "char2sen.fst"
     await _try_minimize(
         [
             "fstcompile",
-            "--acceptor",
             shlex.quote(f"--isymbols={tokens_without_blank}"),
+            shlex.quote(f"--osymbols={tokens_without_blank}"),
             shlex.quote(str(char2sen_txt)),
         ],
         char2sen_fst,
@@ -495,51 +523,7 @@ async def train(model_dir: Path, train_dir: Path, sentences_path: Path) -> None:
     )
 
 
-async def transcribe(model_dir: Path, train_dir: Path, wav_path: Path) -> str:
-    exe_ext = "arm64" if IS_ARM64 else "x86_64"
-    exe_path = BASE_DIR / "bin" / f"stt_onlyprobs.{exe_ext}"
-    proc = await asyncio.create_subprocess_exec(
-        str(exe_path),
-        str(model_dir / "model.tflite"),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    assert proc.stdin is not None
-    assert proc.stdout is not None
-
-    with wave.open(str(wav_path), "rb") as wav_file:
-        assert wav_file.getframerate() == 16000
-        assert wav_file.getsampwidth() == 2
-        assert wav_file.getnchannels() == 1
-
-        while True:
-            chunk = wav_file.readframes(1024)
-            if not chunk:
-                break
-
-            # Write chunk size (4 bytes), then chunk
-            proc.stdin.write(struct.pack("I", len(chunk)))
-            proc.stdin.write(chunk)
-            await proc.stdin.drain()
-
-    # Zero-length chunk signals end
-    proc.stdin.write(struct.pack("I", 0))
-    await proc.stdin.drain()
-
-    line = (await proc.stdout.readline()).decode().strip()
-    probs: List[List[float]] = []
-    while line:
-        probs.append([float(p) for p in line.split()])
-        line = (await proc.stdout.readline()).decode().strip()
-
-    # Clean up
-    proc.terminate()
-    await proc.wait()
-
-    _LOGGER.debug("Decoding into logits")
-
-    # Decode
+async def transcribe(train_dir: Path, probs: List[List[float]]) -> str:
     _LOGGER.debug("Converting logits to tokens")
     tokens_txt = train_dir / "tokens_with_blank.txt"
     char2idx: Dict[str, int] = {}
@@ -699,7 +683,7 @@ async def _verify_fst(path: Path) -> bool:
         stderr=asyncio.subprocess.PIPE,
     )
 
-    stdout, stderr = await result.communicate()
+    stdout, _stderr = await result.communicate()
 
     if result.returncode != 0:
         return False
@@ -745,7 +729,9 @@ async def async_run_pipeline(  # pylint: disable=redefined-builtin
 # -----------------------------------------------------------------------------
 
 
-def get_app(model_dir: Path, train_dir: Path, sentences_path: Path) -> Flask:
+def get_app(
+    model_dir: Path, train_dir: Path, sentences_path: Path, language: str
+) -> Flask:
     flask_app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
     flask_app.secret_key = "90a238ad-7e69-4438-85dc-eee0a68c7435"
 
@@ -754,7 +740,7 @@ def get_app(model_dir: Path, train_dir: Path, sentences_path: Path) -> Flask:
 
     @flask_app.context_processor
     def inject_url_for():
-        return dict(url_for=url_for)
+        return dict(url_for=url_for)  # pylint: disable=use-dict-literal
 
     @flask_app.route("/", methods=["GET"])
     def index():
@@ -766,7 +752,7 @@ def get_app(model_dir: Path, train_dir: Path, sentences_path: Path) -> Flask:
         content = request.form.get("content", "")
         sentences_path.write_text(content, encoding="utf-8")
         _LOGGER.info("Retraining...")
-        await train(model_dir, train_dir, sentences_path)
+        await train(model_dir, train_dir, sentences_path, language)
         _LOGGER.debug("Training finished")
 
         return jsonify({"ok": True, "message": "Saved successfully."})
