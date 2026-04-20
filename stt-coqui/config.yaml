@@ -13,9 +13,13 @@ discovery:
 homeassistant_api: false
 options:
   model: "en_US"
+  use_max_score: true
+  max_score: 4.0
   debug_logging: false
 schema:
   model: "list(am_ET|br_FR|ca_ES|cnh_MM|cs_CZ|ctp_MX|cv_RU|cy_GB|de_DE|dv_MV|el_GR|en_US|es_ES|et_EE|eu_ES|fa_IR|fi_FI|fy_NL|ga_IE|hi_IN|hsb_DE|hu_HU|id_ID|it_IT|ka_GE|kv_RU|ky_KG|lb_LU|lg_UG|lt_LT|lv_LV|mn_MN|mt_MT|nl_NL|or_IN|pl_PL|pt_PT|rm_CH_sursilv|rm_CH_vallader|ro_RO|ru_RU|rw_RW|sah_RU|sl_SI|sw_CD|ta_IN|th_TH|tos_MX|tr_TR|tt_RU|uk_UA|wo_SN|xty_MX|yo_NG)"
+  use_max_score: bool
+  max_score: float
   debug_logging: bool
 ports:
   "10300/tcp": null

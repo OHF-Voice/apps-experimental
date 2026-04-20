@@ -1,8 +1,22 @@
 ---
 configuration:
+  model:
+    name: Model language
+    description: >-
+      Language code for Coqui STT model.
   debug_logging:
     name: Debug logging
     description: >-
       Enable debug logging.
+  max_score:
+    name: Maximum score
+    description: >-
+      Maximum relative sentence probability before recognition stops.
+      Enable debug logging to see probabilities.
+  use_max_score:
+    name: Use maximum score
+    description: >-
+      Enable use of maximum score to stop recognition for out-of-vocabulary
+      sentences.
 network:
   10300/tcp: stt-coqui Wyoming Protocol
