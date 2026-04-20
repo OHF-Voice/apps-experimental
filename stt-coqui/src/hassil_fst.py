@@ -168,9 +168,13 @@ class ListRefNode(Node):
 
 @dataclass
 class NumberRangeNode(Node):
-    start: int
-    end: int
-    step: int
+    """Represents a single number, range, or comma-separated list of both.
+
+    items: List of tuples - either (number,) for single numbers or (start, end, step) for ranges.
+           Step defaults to 1 if not specified in a range.
+    """
+
+    items: List[Tuple[int, ...]]  # (number,) or (start, end, step)
 
 
 # ----------------------------
@@ -300,16 +304,39 @@ class TemplateParser:
         if not content:
             raise ValueError("Empty list reference {} is not allowed")
 
-        m = re.fullmatch(r"(-?\d+)\s*\.\.\s*(-?\d+)(,\d+)?", content)
-        if m:
-            step = 1
-            step_str = m.group(3)
-            if step_str:
-                step = int(step_str[1:])
+        # Parse comma-separated list of numbers and ranges
+        # Supports: 42, 1..10, 1..10/2, 1,2,3..10, 1..10/2,20..50/5, etc.
+        items: List[Tuple[int, ...]] = []
+        parts = [p.strip() for p in content.split(",")]
 
-            return NumberRangeNode(int(m.group(1)), int(m.group(2)), step)
+        for part in parts:
+            if not part:
+                raise ValueError(f"Empty part in number list: {content}")
 
-        return ListRefNode(content)
+            # Check for range with optional step: start..end or start..end/step
+            m_range = re.fullmatch(r"(-?\d+)\s*\.\.\s*(-?\d+)(/\s*(-?\d+))?", part)
+            if m_range:
+                start = int(m_range.group(1))
+                end = int(m_range.group(2))
+                step_str = m_range.group(4)
+                step = int(step_str) if step_str else 1
+                if step == 0:
+                    raise ValueError(f"Step cannot be zero: {part}")
+                items.append((start, end, step))
+                continue
+
+            # Check for single number
+            m_num = re.fullmatch(r"(-?\d+)", part)
+            if m_num:
+                items.append((int(m_num.group(1)),))
+                continue
+
+            raise ValueError(f"Invalid number/range format: {part!r}")
+
+        if not items:
+            raise ValueError(f"Invalid number list format: {content!r}")
+
+        return NumberRangeNode(items)
 
     def _parse_literal(self) -> Node:
         start = self.pos
@@ -411,12 +438,27 @@ def _expand_ref(
         return [_expand_list_value(v) for v in list_values[node.name]]
 
     if isinstance(node, NumberRangeNode):
-        step = node.step if node.start <= node.end else -node.step
         range_words = []
-        for num in range(node.start, node.end + step, step):
-            num_words = spellout(num, locale)
-            num_words = num_words.replace("-", " ")
-            range_words.append(num_words.split())
+        for item in node.items:
+            if len(item) == 1:
+                # Single number
+                num = item[0]
+                num_words = spellout(num, locale)
+                num_words = num_words.replace("-", " ")
+                range_words.append(num_words.split())
+            else:
+                # Range with step: (start, end, step)
+                start, end, step = item
+                # Determine direction based on start vs end
+                if start <= end:
+                    step = abs(step)
+                else:
+                    step = -abs(step)
+
+                for num in range(start, end + step, step):
+                    num_words = spellout(num, locale)
+                    num_words = num_words.replace("-", " ")
+                    range_words.append(num_words.split())
 
         return range_words
 
@@ -534,7 +576,9 @@ def templates_to_fst(
       [ ... ]         optional
       (a|b|c)         alternatives
       {name}          named external list
-      {1..100}        numeric range
+      {1..100}        numeric range (default step 1)
+      {0..100/10}     numeric range with step
+      {0,1,2,3..10}   comma-separated numbers and ranges
 
     Spacing:
       Source whitespace is preserved as a single explicit SPACE token
@@ -545,6 +589,8 @@ def templates_to_fst(
       "set color to (red|green|blue)"
       "turn on {name}"
       "set brightness to {1..100}"
+      "set value to {0..100/10}"
+      "choose from {0,1,2,3..10,15..100/10}"
     """
     if list_values is None:
         list_values = {}

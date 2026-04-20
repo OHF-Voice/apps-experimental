@@ -16,7 +16,7 @@ import time
 import unicodedata
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Union
+from typing import Dict, List, Optional, Set, Union
 
 import aiohttp
 from flask import Flask, jsonify, render_template, request, url_for
@@ -28,9 +28,6 @@ from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info
 from wyoming.server import AsyncEventHandler, AsyncServer
 
 from hassil_fst import EPS, SPACE, TEMPLATE_CHARS, templates_to_fst
-
-if TYPE_CHECKING:
-    from nemo.collections.asr.models import ASRModel
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -245,30 +242,32 @@ class WyomingEventHandler(AsyncEventHandler):
             await self._proc.stdin.drain()
 
         elif AudioStop.is_type(event.type):
-            assert self._proc is not None
-            assert self._proc.stdin is not None
-            assert self._proc.stdout is not None
+            if self._proc is not None:
+                assert self._proc.stdin is not None
+                assert self._proc.stdout is not None
 
-            _LOGGER.debug("Transcribing...")
-            start_time = time.monotonic()
+                _LOGGER.debug("Transcribing...")
+                start_time = time.monotonic()
 
-            # Zero-length chunk signals end
-            self._proc.stdin.write(struct.pack("I", 0))
-            await self._proc.stdin.drain()
+                # Zero-length chunk signals end
+                self._proc.stdin.write(struct.pack("I", 0))
+                await self._proc.stdin.drain()
 
-            line = (await self._proc.stdout.readline()).decode().strip()
-            probs: List[List[float]] = []
-            while line:
-                probs.append([float(p) for p in line.split()])
                 line = (await self._proc.stdout.readline()).decode().strip()
+                probs: List[List[float]] = []
+                while line:
+                    probs.append([float(p) for p in line.split()])
+                    line = (await self._proc.stdout.readline()).decode().strip()
 
-            self._proc.terminate()
-            await self._proc.wait()
+                self._proc.terminate()
+                await self._proc.wait()
 
-            text = await transcribe(self.train_dir, probs)
-
-            end_time = time.monotonic()
-            _LOGGER.debug("Transcribed in %s second(s)", end_time - start_time)
+                text = await transcribe(self.train_dir, probs)
+                end_time = time.monotonic()
+                _LOGGER.debug("Transcribed in %s second(s)", end_time - start_time)
+            else:
+                # No STT audio
+                text = ""
 
             _LOGGER.debug("Transcript (%s): %s", self.language, text)
 
@@ -279,6 +278,29 @@ class WyomingEventHandler(AsyncEventHandler):
             self._proc = None
 
         return True
+
+    async def _handle_output_audio(self, chunk: bytes) -> None:
+        if self._proc is None:
+            _LOGGER.debug("Receiving audio")
+            self._proc = await asyncio.create_subprocess_exec(
+                str(self.exe_path),
+                str(self.model_dir / "model.tflite"),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            Path("output.raw").unlink(missing_ok=True)
+
+        with open("output.raw", "ab") as f:
+            f.write(chunk)
+
+        # Write chunk size (4 bytes), then chunk
+        assert self._proc is not None
+        assert self._proc.stdin is not None
+
+        self._proc.stdin.write(struct.pack("I", len(chunk)))
+        self._proc.stdin.write(chunk)
+        await self._proc.stdin.drain()
 
     async def _write_info(self) -> None:
         if self._info_event is not None:
