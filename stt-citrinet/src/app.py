@@ -8,8 +8,8 @@ import shlex
 import tempfile
 import threading
 import time
-import wave
 import unicodedata
+import wave
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Union, cast
@@ -22,13 +22,14 @@ from wyoming.event import Event
 from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info
 from wyoming.server import AsyncEventHandler, AsyncServer
 
+from hassil_fst import EPS, templates_to_fst
+
 if TYPE_CHECKING:
     from nemo.collections.asr.models import ASRModel
 
 _LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
-EPS = "<eps>"
 BLANK = "<blank>"
 DEFAULT_COMMANDS = ["what time is it", "nevermind"]
 
@@ -103,7 +104,7 @@ async def main() -> None:
     _LOGGER.debug("Loaded %s", args.model)
 
     # Run web UI
-    flask_app = get_app(model, train_dir, sentences_path)
+    flask_app = get_app(model, train_dir, sentences_path, language)
 
     def run_flask():
         flask_app.run(host=args.http_host, port=args.http_port, use_reloader=False)
@@ -113,7 +114,7 @@ async def main() -> None:
 
     # Train and start Wyoming server
     _LOGGER.info("Training started")
-    await train(model, train_dir, sentences_path)
+    await train(model, train_dir, sentences_path, language)
     _LOGGER.info("Training finished")
 
     server = AsyncServer.from_uri(args.uri)
@@ -243,7 +244,9 @@ class WyomingEventHandler(AsyncEventHandler):
 # -----------------------------------------------------------------------------
 
 
-async def train(model: "ASRModel", train_dir: Path, sentences_path: Path) -> None:
+async def train(
+    model: "ASRModel", train_dir: Path, sentences_path: Path, language: str
+) -> None:
     tokenizer = model.tokenizer
 
     idx2char: Dict[int, str] = {}
@@ -326,43 +329,37 @@ async def train(model: "ASRModel", train_dir: Path, sentences_path: Path) -> Non
             ["fstarcsort", "--sort_type=ilabel", "-", shlex.quote(str(token2char_fst))],
         )
 
-    # char -> sentence
+    # char -> sentence using templates_to_fst
+    # This properly handles template syntax like [optional], (alt1|alt2), etc.
+    # by tokenizing each expanded word separately
+    char2sen_fst = train_dir / "char2sen.fst"
     char2sen_txt = train_dir / "char2sen.fst.txt"
-    all_words: Set[str] = set()
-    with open(sentences_path, "r", encoding="utf-8") as sentences_file, open(
-        char2sen_txt, "w", encoding="utf-8"
-    ) as char2sen_file:
-        start_state = 0
-        current_state = 1
 
+    # Read templates and compile to FST
+    templates: List[str] = []
+    with open(sentences_path, "r", encoding="utf-8") as sentences_file:
         for line in sentences_file:
             line = line.strip()
             if not line:
                 continue
-
             # Normalize
             line = unicodedata.normalize("NFC", line)
             line = line.lower()
+            templates.append(line)
 
-            words = [f"t_{t_id}" for t_id in tokenizer.text_to_ids(line)]
-            if not words:
-                continue
+    # Use templates_to_fst with tokenizer to create char2sen FST
+    # The tokenizer is passed to tokenize each word separately
+    fst = templates_to_fst(templates, locale=language, tokenizer=tokenizer)
 
-            all_words.update(words)
+    # Write FST to text format
+    with open(char2sen_txt, "w", encoding="utf-8") as char2sen_file:
+        fst.write(char2sen_file)
 
-            print(start_state, current_state, EPS, file=char2sen_file)
-            for word in words:
-                print(current_state, current_state + 1, word, file=char2sen_file)
-                current_state += 1
-
-            print(current_state, file=char2sen_file)
-
-    char2sen_fst = train_dir / "char2sen.fst"
     await _try_minimize(
         [
             "fstcompile",
-            "--acceptor",
             shlex.quote(f"--isymbols={tokens_without_blank}"),
+            shlex.quote(f"--osymbols={tokens_without_blank}"),
             shlex.quote(str(char2sen_txt)),
         ],
         char2sen_fst,
@@ -584,7 +581,7 @@ async def _verify_fst(path: Path) -> bool:
         stderr=asyncio.subprocess.PIPE,
     )
 
-    stdout, stderr = await result.communicate()
+    stdout, _stderr = await result.communicate()
 
     if result.returncode != 0:
         return False
@@ -630,7 +627,9 @@ async def async_run_pipeline(  # pylint: disable=redefined-builtin
 # -----------------------------------------------------------------------------
 
 
-def get_app(model: "ASRModel", train_dir: Path, sentences_path: Path) -> Flask:
+def get_app(
+    model: "ASRModel", train_dir: Path, sentences_path: Path, language: str
+) -> Flask:
     flask_app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
     flask_app.secret_key = "90a238ad-7e69-4438-85dc-eee0a68c7435"
 
@@ -639,7 +638,7 @@ def get_app(model: "ASRModel", train_dir: Path, sentences_path: Path) -> Flask:
 
     @flask_app.context_processor
     def inject_url_for():
-        return dict(url_for=url_for)
+        return dict(url_for=url_for)  # pylint: disable=use-dict-literal
 
     @flask_app.route("/", methods=["GET"])
     def index():
@@ -651,7 +650,7 @@ def get_app(model: "ASRModel", train_dir: Path, sentences_path: Path) -> Flask:
         content = request.form.get("content", "")
         sentences_path.write_text(content, encoding="utf-8")
         _LOGGER.info("Retraining...")
-        await train(model, train_dir, sentences_path)
+        await train(model, train_dir, sentences_path, language)
         _LOGGER.debug("Training finished")
 
         return jsonify({"ok": True, "message": "Saved successfully."})

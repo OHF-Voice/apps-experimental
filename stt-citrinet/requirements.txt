@@ -1,3 +1,4 @@
 flask[async]
 nemo-toolkit[asr]
+icu-rbnf
 wyoming[zeroconf]
