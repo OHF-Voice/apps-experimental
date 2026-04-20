@@ -65,8 +65,12 @@ async def main() -> None:
         "--train-dir", required=True, help="Directory to write training files"
     )
     parser.add_argument("--cache-dir", help="Path to HuggingFace cache")
+    #
     parser.add_argument("--http-host", default="127.0.0.1", help="Host for web UI")
     parser.add_argument("--http-port", default=5000, type=int, help="Port for web UI")
+    #
+    parser.add_argument("--relative-probability-cutoff", type=float)
+    #
     parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to console"
     )
@@ -114,15 +118,25 @@ async def main() -> None:
 
     # Train and start Wyoming server
     _LOGGER.info("Training started")
-    await train(model, train_dir, sentences_path, language)
-    _LOGGER.info("Training finished")
+    try:
+        await train(model, train_dir, sentences_path, language)
+        _LOGGER.info("Training finished")
+    except Exception:
+        _LOGGER.exception("Unexpected error while training")
 
     server = AsyncServer.from_uri(args.uri)
     _LOGGER.info("Ready")
 
     try:
         await server.run(
-            partial(WyomingEventHandler, model, language, args.model, train_dir)
+            partial(
+                WyomingEventHandler,
+                model,
+                language,
+                args.model,
+                train_dir,
+                args.relative_probability_cutoff,
+            )
         )
     except KeyboardInterrupt:
         pass
@@ -134,12 +148,13 @@ async def main() -> None:
 class WyomingEventHandler(AsyncEventHandler):
     """Event handler for clients."""
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments
         self,
         model: "ASRModel",
         language: str,
         model_name: str,
         train_dir: Path,
+        relative_probability_cutoff: Optional[float],
         *args,
         **kwargs,
     ) -> None:
@@ -151,6 +166,7 @@ class WyomingEventHandler(AsyncEventHandler):
         self.language = language
         self.model_name = model_name
         self.train_dir = train_dir
+        self.relative_probability_cutoff = relative_probability_cutoff
 
         self._wav_file: Optional[wave.Wave_write] = None
         self._wav_path = train_dir / f"{self.client_id}.wav"
@@ -188,7 +204,12 @@ class WyomingEventHandler(AsyncEventHandler):
 
             _LOGGER.debug("Transcribing %s", self._wav_path)
             start_time = time.monotonic()
-            text = await transcribe(self.model, self.train_dir, self._wav_path)
+            text = await transcribe(
+                self.model,
+                self.train_dir,
+                self._wav_path,
+                self.relative_probability_cutoff,
+            )
             end_time = time.monotonic()
             _LOGGER.debug("Transcribed in %s second(s)", end_time - start_time)
 
@@ -379,7 +400,12 @@ async def train(
     )
 
 
-async def transcribe(model: "ASRModel", train_dir: Path, wav_path: Path) -> str:
+async def transcribe(
+    model: "ASRModel",
+    train_dir: Path,
+    wav_path: Path,
+    relative_probability_cutoff: Optional[float] = None,
+) -> str:
     # Importing here because HF_HUB_CACHE is set in main()
     import torch  # pylint:disable=import-outside-toplevel
 
@@ -450,21 +476,23 @@ async def transcribe(model: "ASRModel", train_dir: Path, wav_path: Path) -> str:
         _LOGGER.debug("Greedy transcript: %s", greedy_text)
 
     # Filter tokens to only those present in the grammar
-    allowed_token_ids: Set[int] = set()
-    with open(tokens_txt, "r", encoding="utf-8") as words_file:
-        for line in words_file:
-            line = line.strip()
-            if not line:
-                continue
+    allowed_token_ids: Optional[Set[int]] = None
+    if relative_probability_cutoff is not None:
+        allowed_token_ids = set()
+        with open(tokens_txt, "r", encoding="utf-8") as words_file:
+            for line in words_file:
+                line = line.strip()
+                if not line:
+                    continue
 
-            parts = line.split(maxsplit=1)
-            if len(parts) != 2:
-                continue
+                parts = line.split(maxsplit=1)
+                if len(parts) != 2:
+                    continue
 
-            label = parts[0]
-            if label.startswith("t_"):
-                t_id = int(label.split("_", maxsplit=1)[1])
-                allowed_token_ids.add(t_id)
+                label = parts[0]
+                if label.startswith("t_"):
+                    t_id = int(label.split("_", maxsplit=1)[1])
+                    allowed_token_ids.add(t_id)
 
     # FST shortest path decoding with grammar
     with tempfile.TemporaryDirectory() as temp_dir_str:
@@ -477,7 +505,9 @@ async def transcribe(model: "ASRModel", train_dir: Path, wav_path: Path) -> str:
                     token_id = i - 1
                     if (i == blank_id) or (i >= len(idx2char)):
                         c = BLANK
-                    elif token_id not in allowed_token_ids:
+                    elif allowed_token_ids and (token_id not in allowed_token_ids):
+                        # Skip token outside of grammar
+                        # (only if relative_probability_cutoff is set)
                         continue
                     else:
                         c = idx2char[i]
@@ -535,7 +565,19 @@ async def transcribe(model: "ASRModel", train_dir: Path, wav_path: Path) -> str:
             sentence_prob += word_prob
 
     text = tokenizer.ids_to_text(token_ids)
-    _LOGGER.debug("Final text with probability (%s): %s", sentence_prob, text)
+
+    relative_prob: Optional[float] = None
+    if token_ids and (relative_probability_cutoff is not None):
+        relative_prob = sentence_prob / len(token_ids)
+        if relative_prob >= relative_probability_cutoff:
+            _LOGGER.warning(
+                "Sentence was below relative probability cutoff: got=%s, cutoff=%s",
+                relative_prob,
+                relative_probability_cutoff,
+            )
+            return ""
+
+    _LOGGER.debug("Final text with relative probability (%s): %s", relative_prob, text)
 
     return text
 

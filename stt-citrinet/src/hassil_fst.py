@@ -7,7 +7,7 @@ from icu_rbnf import spellout
 
 
 class TokenizerLike(Protocol):
-    def text_to_ids(self, text: str) -> List[int]: ...
+    def text_to_ids(self, text: str) -> List[int]: ...  # noqa: E704
 
 
 EPS = "<eps>"
@@ -519,8 +519,45 @@ def _compile_node(  # pylint: disable=too-many-positional-arguments
     if isinstance(node, SequenceNode):
         current = set(configs)
 
-        for i, part in enumerate(node.parts):
-            part_needs_space = (i > 0) and node.separators[i - 1]
+        i = 0
+        while i < len(node.parts):
+            part = node.parts[i]
+
+            needs_space = (i > 0) and node.separators[i - 1]
+
+            # --- Detect suffix optional: minute[s] ---
+            if (
+                isinstance(part, LiteralNode)
+                and i + 1 < len(node.parts)
+                and isinstance(node.parts[i + 1], OptionalNode)
+                and isinstance(node.parts[i + 1].child, LiteralNode)
+                and not (
+                    i < len(node.separators) and node.separators[i]
+                )  # no space before optional
+            ):
+                base = part.text
+                suffix = node.parts[i + 1].child.text
+
+                variants = [
+                    [base],
+                    [base + suffix],
+                ]
+
+                new_configs = set()
+                for words in variants:
+                    new_configs |= _compile_text_words(
+                        fst,
+                        current,
+                        words,
+                        tokenizer,
+                        prepend_space_if_needed=needs_space,
+                    )
+
+                current = new_configs
+                i += 2
+                continue
+
+            # --- Normal path ---
             current = _compile_node(
                 fst,
                 part,
@@ -528,8 +565,10 @@ def _compile_node(  # pylint: disable=too-many-positional-arguments
                 list_values,
                 locale,
                 tokenizer,
-                needs_leading_space=part_needs_space,
+                needs_leading_space=needs_space,
             )
+
+            i += 1
 
         return current
 
