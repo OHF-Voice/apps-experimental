@@ -69,7 +69,11 @@ async def main() -> None:
     parser.add_argument("--http-host", default="127.0.0.1", help="Host for web UI")
     parser.add_argument("--http-port", default=5000, type=int, help="Port for web UI")
     #
-    parser.add_argument("--relative-probability-cutoff", type=float)
+    parser.add_argument(
+        "--relative-probability-cutoff",
+        type=float,
+        help="Cutoff for sentence recognition (suggested: 5.5)",
+    )
     #
     parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to console"
@@ -567,15 +571,20 @@ async def transcribe(
     text = tokenizer.ids_to_text(token_ids)
 
     relative_prob: Optional[float] = None
-    if token_ids and (relative_probability_cutoff is not None):
+    if token_ids:
         relative_prob = sentence_prob / len(token_ids)
-        if relative_prob >= relative_probability_cutoff:
-            _LOGGER.warning(
-                "Sentence was below relative probability cutoff: got=%s, cutoff=%s",
-                relative_prob,
-                relative_probability_cutoff,
-            )
-            return ""
+
+    if (
+        (relative_prob is not None)
+        and (relative_probability_cutoff is not None)
+        and (relative_prob >= relative_probability_cutoff)
+    ):
+        _LOGGER.warning(
+            "Sentence was below relative probability cutoff: got=%s, cutoff=%s",
+            relative_prob,
+            relative_probability_cutoff,
+        )
+        return ""
 
     _LOGGER.debug("Final text with relative probability (%s): %s", relative_prob, text)
 

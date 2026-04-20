@@ -116,8 +116,16 @@ async def main() -> None:
         "--train-dir", required=True, help="Directory to write training files"
     )
     parser.add_argument("--cache-dir", required=True, help="Path to cache model files")
+    #
     parser.add_argument("--http-host", default="127.0.0.1", help="Host for web UI")
     parser.add_argument("--http-port", default=5000, type=int, help="Port for web UI")
+    #
+    parser.add_argument(
+        "--relative-probability-cutoff",
+        type=float,
+        help="Cutoff for sentence recognition (suggested: 4)",
+    )
+    #
     parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to console"
     )
@@ -164,15 +172,25 @@ async def main() -> None:
 
     # Train and start Wyoming server
     _LOGGER.info("Training started")
-    await train(model_dir, train_dir, sentences_path, language)
-    _LOGGER.info("Training finished")
+    try:
+        await train(model_dir, train_dir, sentences_path, language)
+        _LOGGER.info("Training finished")
+    except Exception:
+        _LOGGER.exception("Unexpected error while training")
 
     server = AsyncServer.from_uri(args.uri)
     _LOGGER.info("Ready")
 
     try:
         await server.run(
-            partial(WyomingEventHandler, model_dir, language, train_dir, exe_path)
+            partial(
+                WyomingEventHandler,
+                model_dir,
+                language,
+                train_dir,
+                exe_path,
+                args.relative_probability_cutoff,
+            )
         )
     except KeyboardInterrupt:
         pass
@@ -184,12 +202,13 @@ async def main() -> None:
 class WyomingEventHandler(AsyncEventHandler):
     """Event handler for clients."""
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments
         self,
         model_dir: Path,
         language: str,
         train_dir: Path,
         exe_path: Path,
+        relative_probability_cutoff: Optional[float],
         *args,
         **kwargs,
     ) -> None:
@@ -201,6 +220,7 @@ class WyomingEventHandler(AsyncEventHandler):
         self.language = language
         self.train_dir = train_dir
         self.exe_path = exe_path
+        self.relative_probability_cutoff = relative_probability_cutoff
 
         self._proc: "Optional[asyncio.subprocess.Process]" = None
         self._info_event: Optional[Event] = None
@@ -262,7 +282,9 @@ class WyomingEventHandler(AsyncEventHandler):
                 self._proc.terminate()
                 await self._proc.wait()
 
-                text = await transcribe(self.train_dir, probs)
+                text = await transcribe(
+                    self.train_dir, probs, self.relative_probability_cutoff
+                )
                 end_time = time.monotonic()
                 _LOGGER.debug("Transcribed in %s second(s)", end_time - start_time)
             else:
@@ -545,7 +567,11 @@ async def train(
     )
 
 
-async def transcribe(train_dir: Path, probs: List[List[float]]) -> str:
+async def transcribe(
+    train_dir: Path,
+    probs: List[List[float]],
+    relative_probability_cutoff: Optional[float] = None,
+) -> str:
     _LOGGER.debug("Converting logits to tokens")
     tokens_txt = train_dir / "tokens_with_blank.txt"
     char2idx: Dict[str, int] = {}
@@ -567,22 +593,6 @@ async def transcribe(train_dir: Path, probs: List[List[float]]) -> str:
 
     blank_id = char2idx[BLANK]
     idx2char = {i: c for c, i in char2idx.items()}
-
-    allowed_token_ids: Set[int] = set()
-    with open(tokens_txt, "r", encoding="utf-8") as words_file:
-        for line in words_file:
-            line = line.strip()
-            if not line:
-                continue
-
-            parts = line.split(maxsplit=1)
-            if len(parts) != 2:
-                continue
-
-            label = parts[0]
-            if label.startswith("t_"):
-                t_id = int(label.split("_", maxsplit=1)[1])
-                allowed_token_ids.add(t_id)
 
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
@@ -626,7 +636,6 @@ async def transcribe(train_dir: Path, probs: List[List[float]]) -> str:
             ["fstminimize"],
             ["fstpush", "--push_weights"],
             ["fstarcsort", "--sort_type=olabel"],
-            # ["fstprune", f"--weight={prune_threshold}"],  # prune logits
             ["fstcompose", "-", shlex.quote(str(token2sen_fst))],
             ["fstshortestpath"],
             ["fstproject", "--project_type=output"],
@@ -659,7 +668,24 @@ async def transcribe(train_dir: Path, probs: List[List[float]]) -> str:
             word_prob = float(line_parts[4])
             sentence_prob += word_prob
 
+    relative_prob: Optional[float] = None
+    if chars:
+        relative_prob = sentence_prob / len(chars)
+
+    if (
+        (relative_prob is not None)
+        and (relative_probability_cutoff is not None)
+        and (relative_prob >= relative_probability_cutoff)
+    ):
+        _LOGGER.warning(
+            "Sentence was below relative probability cutoff: got=%s, cutoff=%s",
+            relative_prob,
+            relative_probability_cutoff,
+        )
+        return ""
+
     text = "".join(chars)
+    _LOGGER.debug("Final text with relative probability (%s): %s", relative_prob, text)
 
     return text
 
