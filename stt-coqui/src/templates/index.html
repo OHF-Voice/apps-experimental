@@ -101,9 +101,27 @@
 
             <p>
                 Write your voice commands below, one sentence per line with no punctuation (lower case).
-                <br />
-                Numbers and abbreviations must be written out as words (1 &rarr; one, A.C. &rarr; a c).
             </p>
+
+            <details>
+                <summary><strong>Template syntax</strong></summary>
+
+                <ul>
+                    <li>Abbreviations must be written out as words (e.g., <code>A.C.</code> &rarr; <code>a c</code>)</li>
+                    <li>Optional text can be surrounded by square brackets like <code>light[s]</code></li>
+                    <li>Alternative text can be surrounded by parentheses like <code>(red|green|blue)</code></li>
+                    <li>Numbers must be surrounded by curly braces:
+                        <ul>
+                            <li>Individual: <code>{1,2,3}</code></li>
+                            <li>Range: <code>{1..10}</code></li>
+                            <li>Range with step: <code>{0..100/10}</code></li>
+                            <li>Combined: <code>{1,2,3,5..25/5}</code></li>
+                        </ul>
+                    </li>
+                </ul>
+            </details>
+
+            <div style="margin-top: 16px;"></div>
 
             <form id="save-form">
                 <textarea name="content" id="content">{{ content }}</textarea>

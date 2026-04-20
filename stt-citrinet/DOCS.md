@@ -36,7 +36,22 @@ After installing, add the discovered `stt-citrinet` service for the [Wyoming][wy
 After starting the app, visit the web UI and add your voice commands.
 Click "Save" to save and retrain.
 
-Add one sentence per line with no punctuation (lower case). Numbers and abbreviations must be written out as words.
+Add one sentence per line with no punctuation (lower case).
+
+### Template Syntax
+
+The voice command file supports template syntax for more flexible command definitions:
+
+- **Abbreviations**: Write out as words (e.g., `A.C.` → `a c`)
+- **Optional text**: Surround with square brackets like `light[s]`
+- **Alternative text**: Surround with parentheses like `(red|green|blue)`
+- **Numbers**: Surround with curly braces:
+  - Individual: `{1,2,3}`
+  - Range: `{1..10}`
+  - Range with step: `{0..100/10}`
+  - Combined: `{1,2,3,5..25/5}`
+
+See the in-app help for more examples.
 
 [wyoming]: https://www.home-assistant.io/integrations/wyoming/
 [stt]: https://www.home-assistant.io/integrations/stt/
