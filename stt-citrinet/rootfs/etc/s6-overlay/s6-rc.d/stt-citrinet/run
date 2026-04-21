@@ -8,7 +8,7 @@ cd /usr/src
 flags=()
 
 if bashio::config.true 'use_max_score'; then
-    flags+=('--max-score' "$(bashio::config 'max_score')")
+    flags+=('--relative-probability-cutoff' "$(bashio::config 'max_score')")
 fi
 
 if bashio::config.true 'debug_logging'; then

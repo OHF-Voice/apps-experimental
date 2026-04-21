@@ -25,7 +25,7 @@ RUN \
         --extra-index-url https://download.pytorch.org/whl/cpu \
     && rm -rf /var/lib/apt/lists/*
 
-COPY src/app.py ./
+COPY src/app.py src/hassil_fst.py ./
 COPY src/templates/ ./templates/
 
 WORKDIR /
