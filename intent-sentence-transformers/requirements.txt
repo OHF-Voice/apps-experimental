@@ -4,5 +4,6 @@ sentence-transformers
 voluptuous
 linga-franca
 jinja2
+hassil
 Flask[async]
 wyoming[zeroconf]

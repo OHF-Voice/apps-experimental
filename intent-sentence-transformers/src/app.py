@@ -16,6 +16,7 @@ import yaml
 from flask import Flask, jsonify, render_template, request, url_for
 from jinja2 import BaseLoader, Environment
 from voluptuous.humanize import humanize_error
+from lingua_franca.parse import extract_datetime, extract_duration, extract_number
 from werkzeug.middleware.proxy_fix import ProxyFix
 from wyoming.asr import Transcript
 from wyoming.event import Event
@@ -40,6 +41,10 @@ class State:
     model_name: str
     sentences_path: Path
     matcher: "CommandMatcher"
+    sentences_settings: Optional[Dict[str, Any]] = None
+    unknown_command_response: str = (
+        "Sorry, I couldn't understand the command: {{ text }}."
+    )
 
     def train(self) -> None:
         from command_matcher import Command
@@ -47,6 +52,13 @@ class State:
         with open(self.sentences_path, "r", encoding="utf-8") as sentences_file:
             sentences_dict = yaml.safe_load(sentences_file)
             self.language = sentences_dict["language"]
+            self.sentences_settings = sentences_dict.get("settings")
+
+        errors = sentences_dict.get("errors")
+        if errors:
+            self.unknown_command_response = errors.get(
+                "unknown_command", self.unknown_command_response
+            )
 
         self.matcher.reset()
         for command_dict in sentences_dict["commands"]:
@@ -159,6 +171,7 @@ async def main() -> None:
                 matcher,
                 model_name,
                 hass,
+                state,
                 args.satellite_id,
             )
         )
@@ -178,6 +191,7 @@ class WyomingEventHandler(AsyncEventHandler):
         matcher: "CommandMatcher",
         model_name: str,
         hass: HomeAssistant,
+        state: State,
         satellite_id: Optional[str],
         *args,
         **kwargs,
@@ -190,6 +204,7 @@ class WyomingEventHandler(AsyncEventHandler):
         self.matcher = matcher
         self.model_name = model_name
         self.hass = hass
+        self.state = state
         self.satellite_id = satellite_id
 
         self._info_event: Optional[Event] = None
@@ -245,7 +260,10 @@ class WyomingEventHandler(AsyncEventHandler):
                 # Match failed
                 await self.write_event(
                     NotRecognized(
-                        text=command_match.to_string(),
+                        text=self.render_template(
+                            self.state.unknown_command_response,
+                            {"text": transcript.text},
+                        ),
                         context=transcript.context,
                     ).event()
                 )
@@ -267,6 +285,7 @@ class WyomingEventHandler(AsyncEventHandler):
                         "floor_id": hass_info.current_floor_id if hass_info else None,
                     },
                     "lists": command.list_values or {},
+                    "settings": self.state.sentences_settings or {},
                 }
 
                 if command.intent and command.intent.slots:
@@ -415,7 +434,15 @@ class WyomingEventHandler(AsyncEventHandler):
             variables = {}
 
         _LOGGER.debug("Rendering template: '%s' with variables %s", template, variables)
-        result = self._env.from_string(template).render(**variables, min=min, max=max)
+        result = self._env.from_string(template).render(
+            **variables,
+            min=min,
+            max=max,
+            # lingua_franca
+            extract_duration=extract_duration,
+            extract_datetime=extract_datetime,
+            extract_number=extract_number,
+        )
         if isinstance(result, str):
             result = " ".join(result.strip().split())
 

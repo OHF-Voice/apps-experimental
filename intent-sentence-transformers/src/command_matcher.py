@@ -13,6 +13,9 @@ import numpy as np
 import voluptuous as vol
 from lingua_franca.parse import extract_duration, extract_number
 from sentence_transformers import SentenceTransformer
+from hassil import Intents, Sentence, parse_sentence, recognize, WildcardSlotList
+from hassil.intents import Intent, IntentData
+from hassil.expression import Expression, Group, ListReference
 
 # Commands with scores below are rejected.
 DEFAULT_THRESHOLD = 0.9
@@ -56,10 +59,27 @@ SentenceListSchema = {
     ],
 }
 
+ActionSchema = {
+    vol.Required("action"): str,
+    vol.Optional("target"): {
+        vol.Optional("entity_id"): vol.Any(str, [str]),
+        vol.Optional("area_id"): vol.Any(str, [str]),
+        vol.Optional("floor_id"): vol.Any(str, [str]),
+    },
+    vol.Optional("data"): {str: object},
+}
+
+ErrorsSchema = {
+    vol.Optional("unknown_command"): str,
+}
+
 CommandSchema = {
     vol.Required("id"): str,
-    vol.Required("sentences"): [str],
+    vol.Optional("sentences"): [str],
+    vol.Optional("patterns"): [str],
+    vol.Optional("templates"): [str],
     vol.Optional("intent"): IntentSchema,
+    vol.Optional("action"): ActionSchema,
     vol.Optional("description"): str,
     vol.Optional("threshold"): float,
     vol.Optional("margin"): float,
@@ -76,6 +96,8 @@ Schema = vol.Schema(
     {
         vol.Required("language"): str,
         vol.Required("commands"): [CommandSchema],
+        vol.Optional("settings"): {str: object},
+        vol.Optional("errors"): ErrorsSchema,
     },
     # extra=vol.ALLOW_EXTRA,
 )
@@ -149,7 +171,9 @@ class SentenceListValue:
 @dataclass
 class Command:
     id: str
-    sentences: List[str]
+    sentences: Optional[List[str]]
+    patterns: Optional[List[re.Pattern]]
+    templates: Optional[IntentData]
     intent: Optional[CommandIntent] = None
     action: Optional[CommandAction] = None
     description: Optional[str] = None
@@ -215,6 +239,7 @@ class Command:
                     data=action_value.get("data"),
                 )
 
+        # List values that are substituted into example sentences
         sentence_lists: Optional[Dict[str, List[SentenceListValue]]] = None
         sentence_lists_value = command_dict.get("sentence_lists")
         if sentence_lists_value:
@@ -231,10 +256,24 @@ class Command:
                     for value in list_values
                 ]
 
+        # Regular expressions
+        patterns: Optional[List[re.Pattern]] = None
+        patterns_value = command_dict.get("patterns")
+        if patterns_value:
+            patterns = [re.compile(p, re.IGNORECASE) for p in patterns_value]
+
+        # hassil templates
+        templates: Optional[IntentData] = None
+        templates_value = command_dict.get("templates")
+        if templates_value:
+            templates = IntentData(sentence_texts=templates_value)
+
         return Command(
             id=command_dict["id"],
             description=command_dict.get("description"),
-            sentences=command_dict["sentences"],
+            sentences=command_dict.get("sentences"),
+            patterns=patterns,
+            templates=templates,
             intent=intent,
             action=action,
             current_area=current_area,
@@ -312,18 +351,48 @@ class CommandMatchFailure:
 class CommandMatcher:
     def __init__(self, model: SentenceTransformer) -> None:
         self.model = model
-        self.commands: List[Command] = []
+        self.centroid_commands: List[Command] = []
         self.centroids: Optional[np.ndarray] = None
+        self.pattern_commands: List[Command] = []
+        self.wildcard_lists: Optional[Dict[str, WildcardSlotList]] = None
 
     def reset(self) -> None:
-        self.commands = []
+        self.centroid_commands = []
+        self.pattern_commands = []
+        self.template_commands: Dict[str, Command] = {}
         self.centroids = None
 
     def add(self, command: Command) -> None:
-        if not command.sentences:
+        if not (command.sentences or command.patterns or command.templates):
             raise ValueError("Invalid command")
 
+        if command.patterns:
+            # Regex patterns
+            self.pattern_commands.append(command)
+
+        if command.templates:
+            # hassil templates
+            self.template_commands[command.id] = command
+
+            # Extract wildcards
+            if self.wildcard_lists is None:
+                self.wildcard_lists = {}
+
+            list_names: Set[str] = set()
+            for sentence in command.templates.sentences:
+                _collect_list_references(sentence.expression, list_names)
+
+            for list_name in list_names:
+                if list_name in self.wildcard_lists:
+                    continue
+
+                self.wildcard_lists[list_name] = WildcardSlotList(name=list_name)
+
+        if not command.sentences:
+            return
+
         if command.sentence_lists:
+            # Expand lists and create a new command for each expansion
             for sentence_idx, sentence in enumerate(command.sentences, start=1):
                 list_names = set(_LIST_PATTERN.findall(sentence))
                 list_values = [command.sentence_lists[name] for name in list_names]
@@ -359,7 +428,7 @@ class CommandMatcher:
         centroid = l2_normalize(centroid)  # re-normalize after averaging
 
         # Must match 1-to-1 with self.centroids
-        self.commands.append(command)
+        self.centroid_commands.append(command)
 
         if self.centroids is None:
             self.centroids = centroid
@@ -376,8 +445,13 @@ class CommandMatcher:
         min_margin: float = DEFAULT_MARGIN,
         disabled_commands: Optional[Collection[str]] = None,
     ) -> Union[CommandMatch, CommandMatchFailure]:
-        if (not self.commands) or (self.centroids is None):
+        if (not self.pattern_commands) and (
+            (not self.centroid_commands) or (self.centroids is None)
+        ):
             return CommandMatchFailure(CommandMatchFailureReason.NO_COMMANDS)
+
+        # normalize
+        text = text.strip()
 
         _LOGGER.debug(
             "Matching '%s' (language=%s, threshold=%s, min_margin=%s, current_area_id=%s, disabled_commands=%s)",
@@ -388,6 +462,45 @@ class CommandMatcher:
             current_area_id,
             disabled_commands,
         )
+
+        # regex patterns
+        for command in self.pattern_commands:
+            if disabled_commands and (command.id in disabled_commands):
+                # Command is disabled
+                continue
+
+            if command.patterns:
+                for pattern in command.patterns:
+                    pattern_match = pattern.match(text)
+                    if pattern_match is None:
+                        continue
+
+                    return CommandMatch(command, slots=pattern_match.groupdict())
+
+        # hassil templates
+        if self.template_commands:
+            enabled_commands = self.template_commands.values()
+            if disabled_commands:
+                enabled_commands = [
+                    command
+                    for command in self.template_commands.values()
+                    if command.id not in disabled_commands
+                ]
+
+            intents = Intents(
+                language=language,
+                intents={
+                    command.id: Intent(name=command.id, data=[command.templates])
+                    for command in enabled_commands
+                    if command.templates
+                },
+            )
+            template_match = recognize(text, intents, slot_lists=self.wildcard_lists)
+            if template_match:
+                return CommandMatch(
+                    self.template_commands[template_match.intent.name],
+                    slots={e.name: e.value for e in template_match.entities_list},
+                )
 
         # Encode query
         q = self.model.encode(
@@ -404,7 +517,7 @@ class CommandMatcher:
 
         for order_idx, best_idx in enumerate(order):
             best_score = float(sims[best_idx])
-            best_command = self.commands[best_idx]
+            best_command = self.centroid_commands[best_idx]
 
             if best_command.score_threshold is not None:
                 # Command has specific threshold
@@ -463,7 +576,7 @@ class CommandMatcher:
             second_order_idx = order_idx + 1
             while second_order_idx < len(order):
                 second_best_idx = order[second_order_idx]
-                second_best_command = self.commands[second_best_idx]
+                second_best_command = self.centroid_commands[second_best_idx]
                 second_order_idx += 1
                 if disabled_commands and (second_best_command.id in disabled_commands):
                     # Command is disabled
@@ -565,3 +678,13 @@ def parse_number(language: str, text: str, slot: str) -> Dict[str, Any]:
         raise ParseError("no number")
 
     return {slot: result}
+
+
+def _collect_list_references(expression: Expression, list_names: set[str]) -> None:
+    """Collect list reference names recursively."""
+    if isinstance(expression, Group):
+        for item in expression.items:
+            _collect_list_references(item, list_names)
+    elif isinstance(expression, ListReference):
+        # {list}
+        list_names.add(expression.slot_name)

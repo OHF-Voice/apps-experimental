@@ -1,5 +1,18 @@
 ---
 language: en
+
+settings:
+  thermostat_id: "sensor.thermostat_temperature"
+  front_door_id: "lock.deadbolt"
+  garage_door_id: "binary_sensor.garage_door"
+  weather_id: "weather.home"
+  music_script_id: "script.play_music"
+  calendar_id: "calendar.reminders"
+
+errors:
+  unknown_command: |
+    "Sorry, I couldn't understand the command: {{ text }}."
+
 commands:
 
   # ---------------------------------------------------------------------------
@@ -44,9 +57,27 @@ commands:
     duration: true
     sentences:
       - "set a timer for 10 seconds"
-      - "set a timer for 10 minutes"
-      - "set a timer for 10 hours"
-    response: "Starting timer."
+      - "10 minute timer"
+      - "start timer for ten hours"
+    response: |
+      {% set hours = slots.hours | default(0) | int %}
+      {% set minutes = slots.minutes | default(0) | int %}
+      {% set seconds = slots.seconds | default(0) | int %}
+      {% set parts = [] %}
+
+      {% if hours > 0 %}
+      {% set parts = parts + [hours ~ " hour" ~ ("s" if hours != 1 else "")] %}
+      {% endif %}
+
+      {% if minutes > 0 %}
+      {% set parts = parts + [minutes ~ " minute" ~ ("s" if minutes != 1 else "")] %}
+      {% endif %}
+
+      {% if seconds > 0 or parts | length == 0 %}
+      {% set parts = parts + [seconds ~ " second" ~ ("s" if seconds != 1 else "")] %}
+      {% endif %}
+
+      Starting timer for {{ parts | join(", ") }}.
 
   - id: "pause_timer"
     intent: HassPauseTimer
@@ -179,8 +210,9 @@ commands:
       slot: "volume_level"
     sentences:
       - "set volume to 10 percent"
+      - "set music volume to fifty percent"
       - "volume 10%"
-    response: "Decreasing volume."
+    response: "Setting volume to {{ slots.volume_level }} percent."
 
   # ---------------------------------------------------------------------------
   # Weather
@@ -192,7 +224,7 @@ commands:
       - tell me the weather forecast
       - how's the weather
     hass_response: |
-      {% set weather_id = states.weather | selectattr('state', 'ne', 'unavailable') | map(attribute='entity_id') | first %}
+      {% set weather_id = settings.weather_id %}
       {% if weather_id %}
         {% set name = state_attr(weather_id, 'friendly_name') or 'Outside' %}
         {% set cond = states(weather_id) %}
@@ -209,9 +241,99 @@ commands:
         Currently {{ pretty_condition(cond) }}{% if temp is not none %}, {{ temp | round(0) }}{{ unit }}{% endif %}{% if hum is not none %}, humidity {{ hum }} percent{% endif %}{% if wind is not none %}, wind {{ wind | round(0) }}{% if wind_unit %} {{ wind_unit }}{% endif %}{% endif %}.
 
       {% else %}
-      No weather entity available.
+      No weather entity set.
+      {% end
+
+  # ---------------------------------------------------------------------------
+  # Temperature
+  # ---------------------------------------------------------------------------
+  - id: "temperature_inside"
+    description: "gets the temperature inside the house"
+    sentences:
+      - what is the temperature
+      - what's the temperature in the house
+    hass_response: >-
+      {% set thermostat_id = settings.get('thermostat_id') %}
+      {% if thermostat_id %}
+        {% set temp = states(thermostat_id) | float %}
+        {{ temp|int if temp == temp|int else temp }} degrees
+      {% else %}
+        No thermostat is set.
       {% endif %}
 
+  # ---------------------------------------------------------------------------
+  # Doors
+  # ---------------------------------------------------------------------------
+  - id: "front_door_locked"
+    description: "tells if the front door is locked or unlocked"
+    sentences:
+      - is the front door locked
+      - is the front door unlocked
+    hass_response: >-
+      {% set front_door_id = settings.get('front_door_id') %}
+      {% if front_door_id %}
+        {% set state = states(front_door_id) %}
+        {% if state == 'locked' %}
+        Front door is locked.
+        {% else %}
+        Front door is currently unlocked.
+        {% endif %}
+      {% else %}
+        No front door is set.
+      {% endif %}
+
+  - id: "garage_door_open"
+    description: "tells if the garage door is open or closed"
+    sentences:
+      - is the garage door open
+      - is the garage door closed
+    hass_response: >-
+      {% set garage_door_id = settings.get('garage_door_id') %}
+      {% if garage_door_id %}
+        {% set state = states(garage_door_id) %}
+        {% if state == 'on' %}
+        Garage door is currently open.
+        {% else %}
+        Garage door is closed.
+        {% endif %}
+      {% else %}
+        No garage door is set.
+      {% endif %}
+
+  # ---------------------------------------------------------------------------
+  # Music
+  # ---------------------------------------------------------------------------
+  - id: "play_music"
+    action:
+      action: "script.turn_on"
+      target:
+        entity_id: "{{ settings.music_script_id }}"
+      data:
+        variables:
+          search_query: "{{ slots.search_query }}"
+          area_id: "{{ satellite.area_id }}"
+    description: "plays an album by an artist"
+    patterns:
+      - "play (?P<search_query>.+)"
+    response: "Playing {{ slots.search_query }}"
+
+  # ---------------------------------------------------------------------------
+  # Todo
+  # ---------------------------------------------------------------------------
+  - id: "add_todo"
+    intent: HassListAddItem
+    description: "add an item to a todo list"
+    templates:
+      - "add {item} to [the|my] {name} [list]"
+    response: "Adding {{ slots.item }} to {{ slots.name }}"
+
+  - id: "complete_todo"
+    intent: HassListCompleteItem
+    description: "complete an item on a todo list"
+    templates:
+      - "(complete|check off) {item} from [the|my] {name} [list]"
+    response: "Checking off {{ slots.item }} from {{ slots.name }}"
+    
   # ---------------------------------------------------------------------------
   # Misc
   # ---------------------------------------------------------------------------

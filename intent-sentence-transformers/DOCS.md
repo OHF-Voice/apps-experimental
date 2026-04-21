@@ -132,6 +132,11 @@ The following variables are available in templates:
     response: "Turned off {{ lists.name.text }}"
 ```
     
+## Future Ideas
+
+- Different response for when intent or action fails
+- Better distance metric than just cosine
+    
 <!-- Links -->
 [sentence_transformers]: https://huggingface.co/sentence-transformers
 [actions]: https://www.home-assistant.io/docs/scripts/perform-actions/
