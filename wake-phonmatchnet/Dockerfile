@@ -27,7 +27,7 @@ COPY model/ ./model/
 COPY nltk_data/ /usr/share/nltk_data/
 COPY src/dataset/ ./dataset/
 COPY src/ukws_model/ ./ukws_model/
-COPY src/ukws.py ./
+COPY src/ukws.py src/vad_gate.py ./
 COPY src/app.py ./
 
 WORKDIR /

@@ -19,6 +19,8 @@ from wyoming.server import AsyncEventHandler, AsyncServer
 from wyoming.audio import AudioChunk, AudioChunkConverter, AudioStart, AudioStop
 from wyoming.info import Attribution, Describe, Info, WakeModel, WakeProgram
 from wyoming.wake import Detect, Detection, NotDetected
+from pymicro_vad import MicroVad
+from vad_gate import VadWindowGate
 
 if TYPE_CHECKING:
     from ukws import UniversalKeywordSearch
@@ -74,7 +76,10 @@ async def main() -> None:
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
     _LOGGER.debug(args)
 
-    # input/output
+    # Multiple wake words can be configured, and the input form does not have to
+    # match the output form.
+    #
+    # input1:output1, input2:output2, input3, ...
     ww_spoken = []
     ww_phrases = []
     for wake_word in args.wake_word.split(","):
@@ -107,7 +112,15 @@ async def main() -> None:
     _LOGGER.info("Ready")
 
     try:
-        await server.run(partial(WyomingEventHandler, model, ww_phrases))
+        await server.run(
+            partial(
+                WyomingEventHandler,
+                model,
+                ww_phrases,
+                args.window_length,
+                args.hop_length,
+            )
+        )
     except KeyboardInterrupt:
         pass
 
@@ -122,6 +135,8 @@ class WyomingEventHandler(AsyncEventHandler):
         self,
         model: "UniversalKeywordSearch",
         wake_words: List[str],
+        window_length: float,
+        hop_length: float,
         *args,
         **kwargs,
     ) -> None:
@@ -134,6 +149,10 @@ class WyomingEventHandler(AsyncEventHandler):
         self.converter = AudioChunkConverter(rate=16000, width=2, channels=1)
         self.audio_timestamp = 0
         self.detected = False
+        self.vad = MicroVad()
+        self.vad_gate = VadWindowGate(
+            vad=self.vad, window_seconds=window_length, hop_seconds=hop_length
+        )
 
         self._info_event: Optional[Event] = None
 
@@ -165,18 +184,20 @@ class WyomingEventHandler(AsyncEventHandler):
             audio_array = (
                 np.frombuffer(chunk.audio, dtype=np.int16).astype(np.float32) / 32768.0
             )
-            detected_idxs = self.model.process_chunk(audio_array)
-            if detected_idxs:
-                self.detected = True
-                for ww_idx in detected_idxs:
-                    ww_phrase = self.wake_words[ww_idx]
-                    await self.write_event(
-                        Detection(
-                            name=ww_phrase, timestamp=self.audio_timestamp
-                        ).event()
-                    )
-                    _LOGGER.debug("Detected %s at %s", ww_phrase, self.audio_timestamp)
-                self.model.reset()
+            for window_array in self.vad_gate.process_chunk(audio_array):
+                _LOGGER.debug("Processing window")
+                detected_idxs = self.model.process_chunk(window_array)
+                if detected_idxs:
+                    self.detected = True
+                    for ww_idx in detected_idxs:
+                        ww_phrase = self.wake_words[ww_idx]
+                        await self.write_event(
+                            Detection(
+                                name=ww_phrase, timestamp=self.audio_timestamp
+                            ).event()
+                        )
+                        _LOGGER.debug("Detected %s at %s", ww_phrase, self.audio_timestamp)
+                    self.model.reset()
 
             self.audio_timestamp += chunk.milliseconds
         elif AudioStop.is_type(event.type):
