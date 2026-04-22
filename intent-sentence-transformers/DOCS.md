@@ -552,6 +552,7 @@ commands:
     
 ## Future Ideas
 
+- Replace lingua-franca with [ovos-number-parser](https://github.com/OpenVoiceOS/ovos-number-parser) and [ovos-date-parser](https://github.com/OpenVoiceOS/ovos-date-parser)
 - Different response for when intent or action fails
 - Better distance metric than just cosine
 - Lists should be available to templates too
