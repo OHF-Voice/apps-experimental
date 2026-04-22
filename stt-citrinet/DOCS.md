@@ -25,13 +25,14 @@ This app will only recognize the voice commands you configure.
 
 Add the [OHF experimental][ohf-experimental] repo to your app repositories and install the `stt-citrinet` app.
 
+## Usage
+
+After installing the app, add "stt-citrinet" in "Settings -> Devices & Services" ([Wyoming][wyoming] integration).
+Select `stt-citrinet` as the speech-to-text component in your [voice assistant pipeline](voice_control).
+
 Make sure to select a model from the app's configuration page.
 Models are named `stt_<language>_<type>_<size>` with the "type" usually as conformer or citrinet.
 Prefer conformer models for accuracy, but citrinet models for speed.
-
-After installing, add the discovered `stt-citrinet` service for the [Wyoming][wyoming] integration.
-
-## Usage
 
 After starting the app, visit the web UI and add your voice commands.
 Click "Save" to save and retrain.
@@ -57,3 +58,4 @@ See the in-app help for more examples.
 [stt]: https://www.home-assistant.io/integrations/stt/
 [nemo]: https://docs.nvidia.com/nemo-framework/index.html
 [ohf-experimental]: https://github.com/OHF-Voice/apps-experimental
+[voice_control]: https://www.home-assistant.io/voice_control/

@@ -38,7 +38,7 @@
 ## Installation
 
 After installing the app, go to "Device & Services" and add the discovered "stt-qwen".
-Next, set "stt-qwen" as your speech-to-text system in a voice assistant.
+Next, set "stt-qwen" as your speech-to-text system in a [voice assistant][voice_control].
 
 ## Models
 
@@ -81,3 +81,4 @@ Next, set "stt-qwen" as your speech-to-text system in a voice assistant.
 [wyoming]: https://www.home-assistant.io/integrations/wyoming/
 [stt]: https://www.home-assistant.io/integrations/stt/
 [qwen-asr]: https://github.com/QwenLM/Qwen3-ASR/
+[voice_control]: https://www.home-assistant.io/voice_control/

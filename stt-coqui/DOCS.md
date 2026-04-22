@@ -65,9 +65,10 @@ This app will only recognize the voice commands you configure.
 
 Add the [OHF experimental][ohf-experimental] repo to your app repositories and install the `stt-coqui` app.
 
-After installing, add the discovered `stt-coqui` service for the [Wyoming][wyoming] integration.
-
 ## Usage
+
+After installing the app, add "stt-coqui" in "Settings -> Devices & Services" ([Wyoming][wyoming] integration).
+Select `stt-coqui` as the speech-to-text component in your [voice assistant pipeline](voice_control).
 
 After starting the app, visit the web UI and add your voice commands.
 Click "Save" to save and retrain.
@@ -90,3 +91,4 @@ The voice command file supports template syntax for more flexible command defini
 [wyoming]: https://www.home-assistant.io/integrations/wyoming/
 [stt]: https://www.home-assistant.io/integrations/stt/
 [coqui-stt]: https://github.com/coqui-ai/STT
+[voice_control]: https://www.home-assistant.io/voice_control/

@@ -32,6 +32,13 @@
 - ru - Russian
 - uk - Ukrainian
 
+## Usage
+
+After installing the app, add "stt-canary" in "Settings -> Devices & Services" ([Wyoming][wyoming] integration).
+
+Select `stt-canary` as the speech-to-text component in your [voice assistant pipeline](voice_control).
+
 [wyoming]: https://www.home-assistant.io/integrations/wyoming/
 [stt]: https://www.home-assistant.io/integrations/stt/
 [canary]: https://huggingface.co/nvidia/canary-1b-v2
+[voice_control]: https://www.home-assistant.io/voice_control/
