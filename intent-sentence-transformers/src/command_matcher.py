@@ -4,6 +4,7 @@ import datetime
 import itertools
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import Any, Collection, Dict, List, Optional, Set, Union
@@ -11,11 +12,11 @@ from typing import Any, Collection, Dict, List, Optional, Set, Union
 import lingua_franca
 import numpy as np
 import voluptuous as vol
+from hassil import Intents, SlotList, WildcardSlotList, recognize_best
+from hassil.expression import Expression, Group, ListReference
+from hassil.intents import Intent, IntentData
 from lingua_franca.parse import extract_duration, extract_number
 from sentence_transformers import SentenceTransformer
-from hassil import Intents, Sentence, parse_sentence, recognize, WildcardSlotList
-from hassil.intents import Intent, IntentData
-from hassil.expression import Expression, Group, ListReference
 
 # Commands with scores below are rejected.
 DEFAULT_THRESHOLD = 0.9
@@ -354,13 +355,15 @@ class CommandMatcher:
         self.centroid_commands: List[Command] = []
         self.centroids: Optional[np.ndarray] = None
         self.pattern_commands: List[Command] = []
-        self.wildcard_lists: Optional[Dict[str, WildcardSlotList]] = None
+        self.template_commands: Dict[str, Command] = {}
+        self.wildcard_lists: Optional[Dict[str, SlotList]] = None
 
     def reset(self) -> None:
         self.centroid_commands = []
-        self.pattern_commands = []
-        self.template_commands: Dict[str, Command] = {}
         self.centroids = None
+        self.pattern_commands = []
+        self.template_commands = {}
+        self.wildcard_lists = {}
 
     def add(self, command: Command) -> None:
         if not (command.sentences or command.patterns or command.templates):
@@ -379,8 +382,8 @@ class CommandMatcher:
                 self.wildcard_lists = {}
 
             list_names: Set[str] = set()
-            for sentence in command.templates.sentences:
-                _collect_list_references(sentence.expression, list_names)
+            for template in command.templates.sentences:
+                _collect_list_references(template.expression, list_names)
 
             for list_name in list_names:
                 if list_name in self.wildcard_lists:
@@ -479,7 +482,7 @@ class CommandMatcher:
 
         # hassil templates
         if self.template_commands:
-            enabled_commands = self.template_commands.values()
+            enabled_commands: Iterable[Command] = self.template_commands.values()
             if disabled_commands:
                 enabled_commands = [
                     command
@@ -495,7 +498,7 @@ class CommandMatcher:
                     if command.templates
                 },
             )
-            template_match = recognize(text, intents, slot_lists=self.wildcard_lists)
+            template_match = recognize_best(text, intents, slot_lists=self.wildcard_lists)
             if template_match:
                 return CommandMatch(
                     self.template_commands[template_match.intent.name],
@@ -625,7 +628,7 @@ def l2_normalize(x: np.ndarray, axis: int = -1, eps: float = 1e-12) -> np.ndarra
 
 # ---------------------------------------------------------------------------
 
-_LOADED_LANGS = set()
+LOADED_LANGS = set()
 
 
 def parse_duration(
@@ -636,9 +639,9 @@ def parse_duration(
     """Parse duration from text using lingua_franca."""
     data: Dict[str, Any] = {}
 
-    if language not in _LOADED_LANGS:
+    if language not in LOADED_LANGS:
         lingua_franca.load_language(language)
-        _LOADED_LANGS.add(language)
+        LOADED_LANGS.add(language)
 
     # Hack because lingua_franca fails on "twenty-five"
     text = text.replace("-", " ")
@@ -666,9 +669,9 @@ def parse_duration(
 
 def parse_number(language: str, text: str, slot: str) -> Dict[str, Any]:
     """Parse number from text using lingua_franca."""
-    if language not in _LOADED_LANGS:
+    if language not in LOADED_LANGS:
         lingua_franca.load_language(language)
-        _LOADED_LANGS.add(language)
+        LOADED_LANGS.add(language)
 
     # Hack to fix lingua_franca not recognizing "twenty-five"
     text = text.replace("-", " ")

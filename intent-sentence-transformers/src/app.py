@@ -5,18 +5,20 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+import lingua_franca
 import voluptuous as vol
 import yaml
 from flask import Flask, jsonify, render_template, request, url_for
 from jinja2 import BaseLoader, Environment
-from voluptuous.humanize import humanize_error
 from lingua_franca.parse import extract_datetime, extract_duration, extract_number
+from voluptuous.humanize import humanize_error
 from werkzeug.middleware.proxy_fix import ProxyFix
 from wyoming.asr import Transcript
 from wyoming.event import Event
@@ -114,13 +116,17 @@ async def main() -> None:
 
     from sentence_transformers import SentenceTransformer
 
-    from command_matcher import Command, CommandMatcher
+    from command_matcher import LOADED_LANGS, CommandMatcher
 
     sentences_path = Path(args.sentences)
     _LOGGER.debug("Loading sentences from %s", sentences_path)
     with open(sentences_path, "r", encoding="utf-8") as sentences_file:
         sentences_dict = yaml.safe_load(sentences_file)
         language = sentences_dict["language"]
+
+    _LOGGER.debug("Loading language")
+    lingua_franca.load_language(language)
+    LOADED_LANGS.add(language)
 
     if args.model:
         model_name = args.model
@@ -345,9 +351,18 @@ class WyomingEventHandler(AsyncEventHandler):
                     response = self._env.from_string(command.response).render(variables)
                 elif command.hass_response:
                     # Render response template in Home Assistant
-                    response = await self.hass.render_template(
-                        command.hass_response, variables
-                    )
+                    try:
+                        response = await self.hass.render_template(
+                            command.hass_response, variables
+                        )
+                    except Exception:
+                        await self.write_event(
+                            NotRecognized(
+                                text="Unexpected error while rendering response",
+                                context=transcript.context,
+                            ).event()
+                        )
+                        raise
 
                 if command.intent:
                     # Intent recognized
@@ -438,10 +453,12 @@ class WyomingEventHandler(AsyncEventHandler):
             **variables,
             min=min,
             max=max,
+            datetime=datetime,
+            timedelta=timedelta,
             # lingua_franca
-            extract_duration=extract_duration,
-            extract_datetime=extract_datetime,
-            extract_number=extract_number,
+            extract_duration=_wrap_lingua_franca(extract_duration, self.language),
+            extract_datetime=_wrap_lingua_franca(extract_datetime, self.language),
+            extract_number=_wrap_lingua_franca(extract_number, self.language),
         )
         if isinstance(result, str):
             result = " ".join(result.strip().split())
@@ -454,6 +471,18 @@ def is_template_string(maybe_template: str) -> bool:
     return "{" in maybe_template and (
         "{%" in maybe_template or "{{" in maybe_template or "{#" in maybe_template
     )
+
+
+def _wrap_lingua_franca(func, language: str) -> Callable[[str], Any]:
+    def wrapped(text: str) -> Any:
+        text = text.replace("-", " ")  # fix twenty-five, etc.
+        result = func(text, lang=language)
+        if isinstance(result, list):
+            result = result[0]
+
+        return result
+
+    return wrapped
 
 
 # -----------------------------------------------------------------------------

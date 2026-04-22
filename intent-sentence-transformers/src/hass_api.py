@@ -199,6 +199,7 @@ class HomeAssistant:
                         "type": "render_template",
                         "template": template,
                         "variables": variables or {},
+                        "report_errors": True,
                     },
                 )
                 msg = await websocket.receive_json()

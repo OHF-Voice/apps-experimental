@@ -8,13 +8,14 @@ settings:
   weather_id: "weather.home"
   music_script_id: "script.play_music"
   calendar_id: "calendar.reminders"
+  outside_temp_id: "sensor.gw2000b_feels_like_temperature"
+  scene_id: "scene.party_time"
 
 errors:
   unknown_command: |
     "Sorry, I couldn't understand the command: {{ text }}."
 
 commands:
-
   # ---------------------------------------------------------------------------
   # Date/Time
   # ---------------------------------------------------------------------------
@@ -261,6 +262,21 @@ commands:
         No thermostat is set.
       {% endif %}
 
+  - id: "temperature_outside"
+    description: "gets the temperature outside the house"
+    sentences:
+      - what is the temperature outside
+      - how hot is it
+      - how cold is it outside
+    hass_response: >-
+      {% set outside_temp_id = settings.get('outside_temp_id') %}
+      {% if outside_temp_id %}
+        {% set temp = states(outside_temp_id) | float %}
+        {{ temp|int if temp == temp|int else temp }} degrees
+      {% else %}
+        No temperature sensor is set.
+      {% endif %}
+
   # ---------------------------------------------------------------------------
   # Doors
   # ---------------------------------------------------------------------------
@@ -333,7 +349,41 @@ commands:
     templates:
       - "(complete|check off) {item} from [the|my] {name} [list]"
     response: "Checking off {{ slots.item }} from {{ slots.name }}"
-    
+
+  # ---------------------------------------------------------------------------
+  # Reminders
+  # ---------------------------------------------------------------------------
+  - id: "add_reminder"
+    action:
+      action: calendar.create_event
+      target:
+        entity_id: "{{ settings.calendar_id }}"
+      data:
+        summary: "{{ slots.task }}"
+        start_date_time: |
+          {{ extract_datetime(slots.duration).isoformat() }}
+        end_date_time: |
+          {{ (extract_datetime(slots.duration) + timedelta(minutes=5)).isoformat() }}
+    description: "add a reminder event to a calendar"
+    templates:
+      - "remind me in {duration} to {task}"
+      - "remind me to {task} in {duration}"
+    response: "Adding reminder to {{ slots.task }} in {{ slots.duration }}"
+
+  # ---------------------------------------------------------------------------
+  # Scenes
+  # ---------------------------------------------------------------------------
+  - id: "activate_scene"
+    action:
+      action: "scene.turn_on"
+      target:
+        entity_id: "{{ settings.scene_id }}"
+    description: "activates a scene"
+    sentences:
+      - "party time"
+      - "activate party time scene"
+    response: "It's party time! Excellent!"
+
   # ---------------------------------------------------------------------------
   # Misc
   # ---------------------------------------------------------------------------
