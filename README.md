@@ -22,7 +22,7 @@ Expect things to be unpolished!
 
 ## Wake Word Detection
 
-- [wake-phonematchnet](wake-phonematchnet/DOCS.md) - [wake word][wake_word] app using [PhonMatchNet][phonmatchnet]
+- [wake-phonmatchnet](wake-phonmatchnet/DOCS.md) - [wake word][wake_word] app using [PhonMatchNet][phonmatchnet]
     - Streaming detection of arbitrary wake words
 
 <!-- Links -->
