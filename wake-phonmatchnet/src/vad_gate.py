@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Deque, List, Optional
 
 import numpy as np
-from pysilero_vad import SileroVoiceActivityDetector
 from pymicro_vad import MicroVad
 
 
@@ -45,9 +44,8 @@ class VadWindowGate:
                 ...
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments
         self,
-        # vad: SileroVoiceActivityDetector,
         vad: MicroVad,
         window_seconds: float,
         hop_seconds: float,
@@ -284,7 +282,7 @@ class VadWindowGate:
         while self.vad_frames and self.vad_frames[0].end_sample <= keep_from:
             self.vad_frames.popleft()
 
-    def _normalize_window(
+    def _normalize_window(  # pylint: disable=too-many-positional-arguments
         self,
         window: np.ndarray,
         window_start: int,

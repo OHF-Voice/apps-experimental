@@ -8,11 +8,11 @@ import os
 from collections.abc import Collection
 from typing import List, Optional
 
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
 
-from ukws_model import ukws
 from dataset.g2p.g2p_en.g2p import G2p
+from ukws_model import ukws
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 
 class UniversalKeywordSearch:
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments
         self,
         checkpoint_path: str,
         wake_words: List[str],
@@ -94,7 +94,9 @@ class UniversalKeywordSearch:
             axis=0,
         )
 
+        # pylint: disable=protected-access
         if hasattr(emb_s, "_keras_mask") and emb_s._keras_mask is not None:
+            # pylint: disable=protected-access
             emb_s_batch._keras_mask = tf.repeat(
                 emb_s._keras_mask,
                 repeats=self.num_wake_words,

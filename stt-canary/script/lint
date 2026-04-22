@@ -11,9 +11,6 @@ _MODULE_DIR = _PROGRAM_DIR / "src"
 _LINT_DIRS = [_MODULE_DIR]
 _LINT_DIRS = [d.relative_to(_PROGRAM_DIR) for d in _LINT_DIRS]
 
-# Exclude directories from linting
-_EXCLUDE_DIRS = ["src/dataset", "src/ukws_model"]
-
 if _VENV_DIR.exists():
     context = venv.EnvBuilder().ensure_directories(_VENV_DIR)
     python_exe = context.env_exe
@@ -26,15 +23,6 @@ subprocess.check_call(
 subprocess.check_call(
     [python_exe, "-m", "isort"] + _LINT_DIRS + ["--check"], cwd=_PROGRAM_DIR
 )
-subprocess.check_call(
-    [python_exe, "-m", "flake8", "--exclude=" + ",".join(_EXCLUDE_DIRS)] + _LINT_DIRS,
-    cwd=_PROGRAM_DIR,
-)
-subprocess.check_call(
-    [python_exe, "-m", "pylint", "--ignore-paths=" + "|".join(_EXCLUDE_DIRS)] + _LINT_DIRS,
-    cwd=_PROGRAM_DIR,
-)
-subprocess.check_call(
-    [python_exe, "-m", "mypy", "--exclude=" + "|".join(_EXCLUDE_DIRS)] + _LINT_DIRS,
-    cwd=_PROGRAM_DIR,
-)
+subprocess.check_call([python_exe, "-m", "flake8"] + _LINT_DIRS, cwd=_PROGRAM_DIR)
+subprocess.check_call([python_exe, "-m", "pylint"] + _LINT_DIRS, cwd=_PROGRAM_DIR)
+subprocess.check_call([python_exe, "-m", "mypy"] + _LINT_DIRS, cwd=_PROGRAM_DIR)

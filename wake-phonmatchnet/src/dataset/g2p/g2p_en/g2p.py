@@ -1,43 +1,50 @@
 # -*- coding: utf-8 -*-
 # /usr/bin/python
-'''
+"""
 By kyubyong park(kbpark.linguist@gmail.com) and Jongseok Kim(https://github.com/ozmig77)
 https://www.github.com/kyubyong/g2p
-'''
+"""
+
+import nltk
 from nltk import pos_tag
 from nltk.corpus import cmudict
-import nltk
 from nltk.tokenize import TweetTokenizer
+
 word_tokenize = TweetTokenizer().tokenize
-import numpy as np
 import codecs
+import os
 import re
-import os, sys
+import sys
 import unicodedata
 from builtins import str as unicode
+
+import numpy as np
 
 sys.path.append(os.path.dirname(__file__))
 from expand import normalize_numbers
 
 try:
-    nltk.data.find('taggers/averaged_perceptron_tagger.zip')
+    nltk.data.find("taggers/averaged_perceptron_tagger.zip")
 except LookupError:
-    nltk.download('averaged_perceptron_tagger')
+    nltk.download("averaged_perceptron_tagger")
 try:
-    nltk.data.find('corpora/cmudict.zip')
+    nltk.data.find("corpora/cmudict.zip")
 except LookupError:
-    nltk.download('cmudict')
+    nltk.download("cmudict")
 
 dirname = os.path.dirname(__file__)
 
+
 def construct_homograph_dictionary():
-    f = os.path.join(dirname,'homographs.en')
+    f = os.path.join(dirname, "homographs.en")
     homograph2features = dict()
-    for line in codecs.open(f, 'r', 'utf8').read().splitlines():
-        if line.startswith("#"): continue # comment
+    for line in codecs.open(f, "r", "utf8").read().splitlines():
+        if line.startswith("#"):
+            continue  # comment
         headword, pron1, pron2, pos1 = line.strip().split("|")
         homograph2features[headword.lower()] = (pron1.split(), pron2.split(), pos1)
     return homograph2features
+
 
 # def segment(text):
 #     '''
@@ -50,19 +57,83 @@ def construct_homograph_dictionary():
 #     print(text)
 #     return text.split()
 
+
 class G2p(object):
     def __init__(self):
         super().__init__()
         self.graphemes = ["<pad>", "<unk>", "</s>"] + list("abcdefghijklmnopqrstuvwxyz")
-        self.phonemes = ["<pad>", "<unk>", "<s>", "</s>"] + ['AA0', 'AA1', 'AA2', 'AE0', 'AE1', 'AE2', 'AH0', 'AH1', 'AH2', 'AO0',
-                                                             'AO1', 'AO2', 'AW0', 'AW1', 'AW2', 'AY0', 'AY1', 'AY2', 'B', 'CH', 'D', 'DH',
-                                                             'EH0', 'EH1', 'EH2', 'ER0', 'ER1', 'ER2', 'EY0', 'EY1',
-                                                             'EY2', 'F', 'G', 'HH',
-                                                             'IH0', 'IH1', 'IH2', 'IY0', 'IY1', 'IY2', 'JH', 'K', 'L',
-                                                             'M', 'N', 'NG', 'OW0', 'OW1',
-                                                             'OW2', 'OY0', 'OY1', 'OY2', 'P', 'R', 'S', 'SH', 'T', 'TH',
-                                                             'UH0', 'UH1', 'UH2', 'UW',
-                                                             'UW0', 'UW1', 'UW2', 'V', 'W', 'Y', 'Z', 'ZH']
+        self.phonemes = ["<pad>", "<unk>", "<s>", "</s>"] + [
+            "AA0",
+            "AA1",
+            "AA2",
+            "AE0",
+            "AE1",
+            "AE2",
+            "AH0",
+            "AH1",
+            "AH2",
+            "AO0",
+            "AO1",
+            "AO2",
+            "AW0",
+            "AW1",
+            "AW2",
+            "AY0",
+            "AY1",
+            "AY2",
+            "B",
+            "CH",
+            "D",
+            "DH",
+            "EH0",
+            "EH1",
+            "EH2",
+            "ER0",
+            "ER1",
+            "ER2",
+            "EY0",
+            "EY1",
+            "EY2",
+            "F",
+            "G",
+            "HH",
+            "IH0",
+            "IH1",
+            "IH2",
+            "IY0",
+            "IY1",
+            "IY2",
+            "JH",
+            "K",
+            "L",
+            "M",
+            "N",
+            "NG",
+            "OW0",
+            "OW1",
+            "OW2",
+            "OY0",
+            "OY1",
+            "OY2",
+            "P",
+            "R",
+            "S",
+            "SH",
+            "T",
+            "TH",
+            "UH0",
+            "UH1",
+            "UH2",
+            "UW",
+            "UW0",
+            "UW1",
+            "UW2",
+            "V",
+            "W",
+            "Y",
+            "Z",
+            "ZH",
+        ]
         self.g2idx = {g: idx for idx, g in enumerate(self.graphemes)}
         self.idx2g = {idx: g for idx, g in enumerate(self.graphemes)}
 
@@ -74,7 +145,7 @@ class G2p(object):
         self.homograph2features = construct_homograph_dictionary()
 
     def load_variables(self):
-        self.variables = np.load(os.path.join(dirname,'checkpoint20.npz'))
+        self.variables = np.load(os.path.join(dirname, "checkpoint20.npz"))
         self.enc_emb = self.variables["enc_emb"]  # (29, 64). (len(graphemes), emb)
         self.enc_w_ih = self.variables["enc_w_ih"]  # (3*128, 64)
         self.enc_w_hh = self.variables["enc_w_hh"]  # (3*128, 128)
@@ -96,8 +167,14 @@ class G2p(object):
         rzn_ih = np.matmul(x, w_ih.T) + b_ih
         rzn_hh = np.matmul(h, w_hh.T) + b_hh
 
-        rz_ih, n_ih = rzn_ih[:, :rzn_ih.shape[-1] * 2 // 3], rzn_ih[:, rzn_ih.shape[-1] * 2 // 3:]
-        rz_hh, n_hh = rzn_hh[:, :rzn_hh.shape[-1] * 2 // 3], rzn_hh[:, rzn_hh.shape[-1] * 2 // 3:]
+        rz_ih, n_ih = (
+            rzn_ih[:, : rzn_ih.shape[-1] * 2 // 3],
+            rzn_ih[:, rzn_ih.shape[-1] * 2 // 3 :],
+        )
+        rz_hh, n_hh = (
+            rzn_hh[:, : rzn_hh.shape[-1] * 2 // 3],
+            rzn_hh[:, rzn_hh.shape[-1] * 2 // 3 :],
+        )
 
         rz = self.sigmoid(rz_ih + rz_hh)
         r, z = np.split(rz, 2, -1)
@@ -127,8 +204,15 @@ class G2p(object):
     def predict(self, word):
         # encoder
         enc = self.encode(word)
-        enc = self.gru(enc, len(word) + 1, self.enc_w_ih, self.enc_w_hh,
-                       self.enc_b_ih, self.enc_b_hh, h0=np.zeros((1, self.enc_w_hh.shape[-1]), np.float32))
+        enc = self.gru(
+            enc,
+            len(word) + 1,
+            self.enc_w_ih,
+            self.enc_w_hh,
+            self.enc_b_ih,
+            self.enc_b_hh,
+            h0=np.zeros((1, self.enc_w_hh.shape[-1]), np.float32),
+        )
         last_hidden = enc[:, -1, :]
 
         # decoder
@@ -137,23 +221,29 @@ class G2p(object):
 
         preds = []
         for i in range(20):
-            h = self.grucell(dec, h, self.dec_w_ih, self.dec_w_hh, self.dec_b_ih, self.dec_b_hh)  # (b, h)
+            h = self.grucell(
+                dec, h, self.dec_w_ih, self.dec_w_hh, self.dec_b_ih, self.dec_b_hh
+            )  # (b, h)
             logits = np.matmul(h, self.fc_w.T) + self.fc_b
             pred = logits.argmax()
-            if pred == 3: break  # 3: </s>
+            if pred == 3:
+                break  # 3: </s>
             preds.append(pred)
             dec = np.take(self.dec_emb, [pred], axis=0)
 
         preds = [self.idx2p.get(idx, "<unk>") for idx in preds]
-        
+
         return preds
 
     def __call__(self, text):
         # preprocessing
         text = unicode(text)
         text = normalize_numbers(text)
-        text = ''.join(char for char in unicodedata.normalize('NFD', text)
-                       if unicodedata.category(char) != 'Mn')  # Strip accents
+        text = "".join(
+            char
+            for char in unicodedata.normalize("NFD", text)
+            if unicodedata.category(char) != "Mn"
+        )  # Strip accents
         text = text.lower()
         text = text.replace("_", " ")
         text = re.sub("[^ a-z'.,?!\-]", "", text)
@@ -186,13 +276,16 @@ class G2p(object):
             prons.extend([" "])
 
         return prons[:-1]
-    
+
     def embedding(self, text):
         # preprocessing
         text = unicode(text)
         text = normalize_numbers(text)
-        text = ''.join(char for char in unicodedata.normalize('NFD', text)
-                       if unicodedata.category(char) != 'Mn')  # Strip accents
+        text = "".join(
+            char
+            for char in unicodedata.normalize("NFD", text)
+            if unicodedata.category(char) != "Mn"
+        )  # Strip accents
         text = text.lower()
         text = re.sub("[^ a-z'.,?!\-]", "", text)
         text = text.replace("i.e.", "that is")
@@ -205,8 +298,15 @@ class G2p(object):
         def _get(self, word):
             # encoder
             enc = self.encode(word)
-            enc = self.gru(enc, len(word) + 1, self.enc_w_ih, self.enc_w_hh,
-                        self.enc_b_ih, self.enc_b_hh, h0=np.zeros((1, self.enc_w_hh.shape[-1]), np.float32))
+            enc = self.gru(
+                enc,
+                len(word) + 1,
+                self.enc_w_ih,
+                self.enc_w_hh,
+                self.enc_b_ih,
+                self.enc_b_hh,
+                h0=np.zeros((1, self.enc_w_hh.shape[-1]), np.float32),
+            )
             last_hidden = enc[:, -1, :]
 
             # decoder
@@ -214,33 +314,52 @@ class G2p(object):
             h = last_hidden
 
             preds = []
-            emb = np.empty((0, self.dec_emb[0,:].shape[-1]))
+            emb = np.empty((0, self.dec_emb[0, :].shape[-1]))
             for i in range(20):
-                h = self.grucell(dec, h, self.dec_w_ih, self.dec_w_hh, self.dec_b_ih, self.dec_b_hh)  # (b, h)
+                h = self.grucell(
+                    dec, h, self.dec_w_ih, self.dec_w_hh, self.dec_b_ih, self.dec_b_hh
+                )  # (b, h)
                 logits = np.matmul(h, self.fc_w.T) + self.fc_b
                 pred = logits.argmax()
-                if pred == 3: break  # 3: </s>
+                if pred == 3:
+                    break  # 3: </s>
                 dec = np.take(self.dec_emb, [pred], axis=0)
                 emb = np.append(emb, h, axis=0)
 
             return emb
-        
+
         # steps
-        embed = np.empty((0, self.dec_emb[0,:].shape[-1]))
+        embed = np.empty((0, self.dec_emb[0, :].shape[-1]))
         for word in words:
             if re.search("[a-z]", word) is None:
                 continue
             embed = np.append(embed, _get(self, word), axis=0)
             embed = np.append(embed, np.take(self.dec_emb, [0], axis=0), axis=0)
 
-        return embed[:-1,:]
-    
-if __name__ == '__main__':
-    texts = ['yes', 'no', 'up', 'down', 'left', 'right', 'on', 'off', 'stop', 'go', 'hey_android', 'hey_snapdragon', 'hi_galaxy', 'hi_lumina']
-            # "I have $250 in my pocket.", # number -> spell-out
-            #  "popular pets, e.g. cats and dogs", # e.g. -> for example
-            #  "I refuse to collect the refuse around here.", # homograph
-            #  "I'm an activationist."] # newly coined word
+        return embed[:-1, :]
+
+
+if __name__ == "__main__":
+    texts = [
+        "yes",
+        "no",
+        "up",
+        "down",
+        "left",
+        "right",
+        "on",
+        "off",
+        "stop",
+        "go",
+        "hey_android",
+        "hey_snapdragon",
+        "hi_galaxy",
+        "hi_lumina",
+    ]
+    # "I have $250 in my pocket.", # number -> spell-out
+    #  "popular pets, e.g. cats and dogs", # e.g. -> for example
+    #  "I refuse to collect the refuse around here.", # homograph
+    #  "I'm an activationist."] # newly coined word
     g2p = G2p()
     for text in texts:
         out = g2p(text)

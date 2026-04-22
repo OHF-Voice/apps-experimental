@@ -1,11 +1,17 @@
-import os, sys
-import tensorflow as tf
+import os
+import sys
+
 import numpy as np
-from tensorflow.keras.models import Model
+import tensorflow as tf
 from tensorflow.keras import layers
+from tensorflow.keras.models import Model
 
 sys.path.append(os.path.dirname(__file__))
-import encoder, extractor, discriminator, log_melspectrogram, speech_embedding
+import discriminator
+import encoder
+import extractor
+import log_melspectrogram
+import speech_embedding
 from utils import make_feature_matrix as concat_sequence
 
 seed = 42

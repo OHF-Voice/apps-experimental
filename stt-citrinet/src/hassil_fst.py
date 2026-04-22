@@ -530,13 +530,15 @@ def _compile_node(  # pylint: disable=too-many-positional-arguments
                 isinstance(part, LiteralNode)
                 and i + 1 < len(node.parts)
                 and isinstance(node.parts[i + 1], OptionalNode)
-                and isinstance(node.parts[i + 1].child, LiteralNode)
+                and isinstance(
+                    node.parts[i + 1].child, LiteralNode  # type: ignore[attr-defined]
+                )
                 and not (
                     i < len(node.separators) and node.separators[i]
                 )  # no space before optional
             ):
                 base = part.text
-                suffix = node.parts[i + 1].child.text
+                suffix = node.parts[i + 1].child.text  # type: ignore[attr-defined]
 
                 variants = [
                     [base],

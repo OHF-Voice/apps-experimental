@@ -3,15 +3,15 @@
 import argparse
 import asyncio
 import logging
-import time
 import os
 import tempfile
+import time
 import wave
 from functools import partial
 from pathlib import Path
-from typing import cast, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, cast
 
-from wyoming.asr import Transcript, Transcribe
+from wyoming.asr import Transcribe, Transcript
 from wyoming.audio import AudioChunk, AudioStop
 from wyoming.event import Event
 from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info

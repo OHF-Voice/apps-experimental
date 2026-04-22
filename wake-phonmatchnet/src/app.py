@@ -3,24 +3,24 @@
 import argparse
 import asyncio
 import logging
-import time
 import os
+import time
 from functools import partial
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
+
+import numpy as np
+from pymicro_vad import MicroVad
+from wyoming.audio import AudioChunk, AudioChunkConverter, AudioStart, AudioStop
+from wyoming.event import Event
+from wyoming.info import Attribution, Describe, Info, WakeModel, WakeProgram
+from wyoming.server import AsyncEventHandler, AsyncServer
+from wyoming.wake import Detect, Detection, NotDetected
+
+from vad_gate import VadWindowGate
 
 # Needed by PhonMatchNet
 os.environ["TF_USE_LEGACY_KERAS"] = "1"
-
-
-import numpy as np
-from wyoming.event import Event
-from wyoming.server import AsyncEventHandler, AsyncServer
-from wyoming.audio import AudioChunk, AudioChunkConverter, AudioStart, AudioStop
-from wyoming.info import Attribution, Describe, Info, WakeModel, WakeProgram
-from wyoming.wake import Detect, Detection, NotDetected
-from pymicro_vad import MicroVad
-from vad_gate import VadWindowGate
 
 if TYPE_CHECKING:
     from ukws import UniversalKeywordSearch
@@ -196,7 +196,9 @@ class WyomingEventHandler(AsyncEventHandler):
                                 name=ww_phrase, timestamp=self.audio_timestamp
                             ).event()
                         )
-                        _LOGGER.debug("Detected %s at %s", ww_phrase, self.audio_timestamp)
+                        _LOGGER.debug(
+                            "Detected %s at %s", ww_phrase, self.audio_timestamp
+                        )
                     self.model.reset()
 
             self.audio_timestamp += chunk.milliseconds
