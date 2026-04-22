@@ -1,6 +1,6 @@
 # PhonMatchNet Wake Word
 
-[Wyoming][wyoming] [wake word][wake_word] detection service using [PhonMatchNet](https://github.com/ncsoft/PhonMatchNet).
+[Wyoming][wyoming] [wake word][wake_word] detection service using [PhonMatchNet][phonmatchnet].
 
 Uses a "universal" keyword search model to detect arbitrary English wake words.
 Can detect multiple wake words simultaneously.
@@ -43,3 +43,4 @@ Automatic gain control (AGC) on the incoming audio should be turned **off** when
 [wyoming]: https://www.home-assistant.io/integrations/wyoming/
 [wake_word]: https://www.home-assistant.io/integrations/wake_word/
 [arpabet]: https://en.wikipedia.org/wiki/ARPABET
+[phonmatchnet]: https://github.com/ncsoft/PhonMatchNet

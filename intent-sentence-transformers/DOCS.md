@@ -8,7 +8,7 @@ After installing the app, add "intent-sentence-transformers" in "Settings -> Dev
 
 In the app's configuration, click "Open Web UI" and add your commands. Make sure to click "Save" to save and re-train.
 
-Select `intent-sentence-transformers` as the conversation agent component in your [voice assistant pipeline](voice_control).
+Select `intent-sentence-transformers` as the [conversation agent][conversation] component in your [voice assistant pipeline](voice_control).
 
 ## Models
 
@@ -566,3 +566,4 @@ commands:
 [voice_control]: https://www.home-assistant.io/voice_control/
 [en_model]: https://huggingface.co/intfloat/e5-small-v2
 [multilingual_model]: https://huggingface.co/intfloat/multilingual-e5-small
+[conversation]: https://www.home-assistant.io/integrations/conversation/
