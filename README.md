@@ -34,3 +34,4 @@ Expect things to be unpolished!
 [sentence_transformers]: https://huggingface.co/sentence-transformers
 [conversation]: https://www.home-assistant.io/integrations/conversation/
 [wake_word]: https://www.home-assistant.io/integrations/wake_word/
+[phonmatchnet]: https://github.com/ncsoft/PhonMatchNet
