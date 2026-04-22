@@ -1,5 +1,5 @@
 ---
-version: 1.0.0-102
+version: 1.0.0
 slug: stt-citrinet
 name: Citrinet Speech-to-Text
 description: Limited Wyoming speech-to-text server for NeMo's CTC models
