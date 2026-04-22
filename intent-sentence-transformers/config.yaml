@@ -1,5 +1,5 @@
 ---
-version: 1.0.0
+version: 1.0.0-11
 slug: intent-sentence-transformers
 name: Sentence Transformers Agent
 description: Sentence Transformers Agent
@@ -10,11 +10,14 @@ arch:
 init: false
 discovery:
   - wyoming
-homeassistant_api: false
+homeassistant_api: true
 options:
   debug_logging: false
 schema:
+  model: str?
   debug_logging: bool
 ports:
   "10500/tcp": null
 homeassistant: 2023.11.0
+ingress: true
+ingress_port: 5000

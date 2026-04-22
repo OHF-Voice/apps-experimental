@@ -1,5 +1,11 @@
 ---
 configuration:
+  model:
+    name: Model id
+    description: >-
+      Override default sentence transformers model with HuggingFace id.
+      Default English model is 'intfloat/e5-small-v2'.
+      Default multilingual model is 'intfloat/multilingual-e5-small'.
   debug_logging:
     name: Debug logging
     description: >-

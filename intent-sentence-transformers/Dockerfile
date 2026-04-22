@@ -20,9 +20,13 @@ RUN \
     && pip3 install --no-cache-dir -U \
         setuptools \
         wheel \
-    && pip3 install --no-cache-dir -r ./requirements.txt \
+    && pip3 install --no-cache-dir \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        -r ./requirements.txt \
     && rm -rf /var/lib/apt/lists/*
 
+COPY src/templates/ ./templates/
+COPY src/hass_api.py src/command_matcher.py ./
 COPY src/app.py ./
 
 WORKDIR /

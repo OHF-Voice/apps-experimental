@@ -498,7 +498,9 @@ class CommandMatcher:
                     if command.templates
                 },
             )
-            template_match = recognize_best(text, intents, slot_lists=self.wildcard_lists)
+            template_match = recognize_best(
+                text, intents, slot_lists=self.wildcard_lists
+            )
             if template_match:
                 return CommandMatch(
                     self.template_commands[template_match.intent.name],

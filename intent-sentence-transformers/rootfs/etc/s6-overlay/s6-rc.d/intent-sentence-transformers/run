@@ -7,10 +7,20 @@ cd /usr/src
 
 flags=()
 
+if bashio::config.has_value 'api_key'; then
+    flags+=('--model' "$(bashio::config 'model')")
+fi
+
 if bashio::config.true 'debug_logging'; then
     flags+=('--debug')
 fi
 
 exec python3 app.py \
     --uri 'tcp://0.0.0.0:10500' \
+    --hass-token "${SUPERVISOR_TOKEN}" \
+    --hass-api 'http://supervisor/core/api' \
+    --sentences /data/sentences.yaml \
+    --model-cache-dir /data/cache \
+    --http-host 0.0.0.0 \
+    --http-port 5000 \
     ${flags[@]}

@@ -2,7 +2,7 @@ aiohttp
 PyYAML
 sentence-transformers
 voluptuous
-linga-franca
+lingua-franca
 jinja2
 hassil
 Flask[async]

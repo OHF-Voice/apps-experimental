@@ -80,7 +80,7 @@
       messageEl.textContent = "";
 
       try {
-        const resp = await fetch("/save", {
+        const resp = await fetch("{{ url_for('save') }}", {
           method: "POST",
           headers: {
             "Content-Type": "text/plain; charset=utf-8"

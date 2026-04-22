@@ -136,6 +136,9 @@ The following variables are available in templates:
 
 - Different response for when intent or action fails
 - Better distance metric than just cosine
+- Lists should be available to templates too
+- Add webhooks alongside intents and actions
+- Allow for multiple sentence files and languages
     
 <!-- Links -->
 [sentence_transformers]: https://huggingface.co/sentence-transformers

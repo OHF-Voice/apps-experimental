@@ -44,6 +44,7 @@ class State:
     sentences_path: Path
     matcher: "CommandMatcher"
     sentences_settings: Optional[Dict[str, Any]] = None
+    no_commands_response: str = "Sorry, no commands have been configured yet."
     unknown_command_response: str = (
         "Sorry, I couldn't understand the command: {{ text }}."
     )
@@ -58,6 +59,9 @@ class State:
 
         errors = sentences_dict.get("errors")
         if errors:
+            self.no_commands_response = errors.get(
+                "no_commands", self.no_commands_response
+            )
             self.unknown_command_response = errors.get(
                 "unknown_command", self.unknown_command_response
             )
@@ -119,6 +123,11 @@ async def main() -> None:
     from command_matcher import LOADED_LANGS, CommandMatcher
 
     sentences_path = Path(args.sentences)
+    if not sentences_path.exists():
+        with open(sentences_path, "w", encoding="utf-8") as sentences_file:
+            print("language: en", file=sentences_file)
+            print("commands: []", file=sentences_file)
+
     _LOGGER.debug("Loading sentences from %s", sentences_path)
     with open(sentences_path, "r", encoding="utf-8") as sentences_file:
         sentences_dict = yaml.safe_load(sentences_file)
@@ -227,7 +236,11 @@ class WyomingEventHandler(AsyncEventHandler):
 
     async def _handle_event(self, event: Event) -> bool:
         """Handle Wyoming event."""
-        from command_matcher import CommandMatch, CommandMatchFailure
+        from command_matcher import (
+            CommandMatch,
+            CommandMatchFailure,
+            CommandMatchFailureReason,
+        )
 
         if Describe.is_type(event.type):
             await self._write_info()
@@ -244,8 +257,17 @@ class WyomingEventHandler(AsyncEventHandler):
 
             hass_info: Optional[InfoForRecognition] = None
             if satellite_id:
-                hass_info = await self.hass.get_info(satellite_id=satellite_id)
-                current_area_id = hass_info.current_area_id
+                try:
+                    hass_info = await self.hass.get_info(satellite_id=satellite_id)
+                    current_area_id = hass_info.current_area_id
+                except Exception:
+                    await self.write_event(
+                        NotRecognized(
+                            text="Unexpected error while getting Home Assistant information",
+                            context=transcript.context,
+                        ).event()
+                    )
+                    raise
 
             try:
                 command_match = self.matcher.match(
@@ -264,10 +286,15 @@ class WyomingEventHandler(AsyncEventHandler):
             _LOGGER.debug(command_match)
             if isinstance(command_match, CommandMatchFailure):
                 # Match failed
+                if command_match.reason == CommandMatchFailureReason.NO_COMMANDS:
+                    response_text = self.state.no_commands_response
+                else:
+                    response_text = self.state.unknown_command_response
+
                 await self.write_event(
                     NotRecognized(
                         text=self.render_template(
-                            self.state.unknown_command_response,
+                            response_text,
                             {"text": transcript.text},
                         ),
                         context=transcript.context,
@@ -394,7 +421,7 @@ class WyomingEventHandler(AsyncEventHandler):
         info = Info(
             intent=[
                 IntentProgram(
-                    "sentence-transformers",
+                    "intent-sentence-transformers",
                     attribution=Attribution(
                         name="OHF Voice", url="https://github.com/OHF-Voice"
                     ),
