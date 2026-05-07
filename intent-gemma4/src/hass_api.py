@@ -1,0 +1,295 @@
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+from urllib.parse import urlparse, urlunparse
+
+import aiohttp
+
+
+@dataclass
+class InfoForRecognition:
+    """Information gathered from Home Assistant for intent recognition."""
+
+    current_area_id: Optional[str]
+    current_area_name: Optional[str]
+    current_floor_id: Optional[str]
+    current_device_id: Optional[str] = None
+    current_satellite_id: Optional[str] = None
+
+class HomeAssistantError(Exception):
+    pass
+
+class HomeAssistant:
+    def __init__(
+        self,
+        token: str,
+        api_url: str = "http://homeassistant.local:8123/api",
+    ) -> None:
+        self.token = token
+        self.api_url = api_url.rstrip("/")
+
+        # Get websocket API URL
+        parsed = urlparse(self.api_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
+
+        # Convert scheme
+        scheme = "wss" if parsed.scheme == "https" else "ws"
+        path = f"{parsed.path}/websocket"
+        self.websocket_api_url = urlunparse(
+            parsed._replace(
+                scheme=scheme,
+                path=path,
+                params="",
+                query="",
+                fragment="",
+            )
+        )
+
+    async def get_info(
+        self, device_id: Optional[str] = None, satellite_id: Optional[str] = None
+    ) -> InfoForRecognition:
+        """Get necessary information for intent recognition."""
+        current_id = 0
+
+        def next_id() -> int:
+            nonlocal current_id
+            current_id += 1
+            return current_id
+
+        current_area_id: Optional[str] = None
+        current_area_name: Optional[str] = None
+        current_floor_id: Optional[str] = None
+
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                self.websocket_api_url, max_msg_size=0
+            ) as websocket:
+                # Authenticate
+                msg = await websocket.receive_json()
+                assert msg["type"] == "auth_required", msg
+
+                await websocket.send_json(
+                    {
+                        "type": "auth",
+                        "access_token": self.token,
+                    },
+                )
+
+                msg = await websocket.receive_json()
+                assert msg["type"] == "auth_ok", msg
+
+                # Areas
+                await websocket.send_json(
+                    {"id": next_id(), "type": "config/area_registry/list"}
+                )
+                msg = await websocket.receive_json()
+                assert msg["success"], msg
+                areas = {area_info["area_id"]: area_info for area_info in msg["result"]}
+
+                # Devices
+                await websocket.send_json(
+                    {"id": next_id(), "type": "config/device_registry/list"}
+                )
+                msg = await websocket.receive_json()
+                assert msg["success"], msg
+                devices = {
+                    device_info["id"]: device_info for device_info in msg["result"]
+                }
+
+                satellite_ids = set()
+                await websocket.send_json(
+                    {
+                        "id": next_id(),
+                        "type": "get_states",
+                    }
+                )
+                msg = await websocket.receive_json()
+                assert msg["success"], msg
+                for state_data in msg["result"]:
+                    entity_id = state_data["entity_id"]
+                    domain = entity_id.split(".", maxsplit=1)[0]
+                    if domain == "assist_satellite":
+                        satellite_ids.add(entity_id)
+
+                # Get preferred area
+                if satellite_id:
+                    # Get area of assist_satellite entity
+                    await websocket.send_json(
+                        {
+                            "id": next_id(),
+                            "type": "config/entity_registry/get_entries",
+                            "entity_ids": [satellite_id],
+                        }
+                    )
+                    msg = await websocket.receive_json()
+                    assert msg["success"], msg
+                    satellite_info = next(iter(msg["result"].values()))
+                    satellite_area_id = satellite_info.get("area_id")
+                    if satellite_area_id:
+                        current_area_id = satellite_area_id
+                    else:
+                        # Use device area
+                        satellite_device_id = satellite_info.get("device_id")
+                        if satellite_device_id:
+                            current_area_id = devices.get(satellite_device_id, {}).get(
+                                "area_id"
+                            )
+                elif device_id:
+                    # Get area from device instead
+                    current_area_id = devices.get(device_id, {}).get("area_id")
+
+                # Get satellite devices
+                satellite_devices: Dict[str, str] = {}
+                if satellite_ids:
+                    await websocket.send_json(
+                        {
+                            "id": next_id(),
+                            "type": "config/entity_registry/get_entries",
+                            "entity_ids": list(satellite_ids),
+                        }
+                    )
+
+                    msg = await websocket.receive_json()
+                    assert msg["success"], msg
+                    for entity_id, entity_info in msg["result"].items():
+                        device_id = entity_info.get("device_id")
+                        if device_id:
+                            satellite_devices[entity_id] = device_id
+
+                if current_area_id:
+                    area = areas.get(current_area_id)
+                    if area:
+                        current_area_name = area["name"]
+                        current_floor_id = area.get("floor_id")
+
+        return InfoForRecognition(
+            current_area_id=current_area_id,
+            current_area_name=current_area_name,
+            current_floor_id=current_floor_id,
+            current_device_id=device_id,
+            current_satellite_id=satellite_id,
+        )
+
+    async def render_template(
+        self, template: str, variables: Optional[Mapping[str, Any]] = None
+    ) -> Any:
+        current_id = 0
+
+        def next_id() -> int:
+            nonlocal current_id
+            current_id += 1
+            return current_id
+
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                self.websocket_api_url, max_msg_size=0
+            ) as websocket:
+                # Authenticate
+                msg = await websocket.receive_json()
+                assert msg["type"] == "auth_required", msg
+
+                await websocket.send_json(
+                    {
+                        "type": "auth",
+                        "access_token": self.token,
+                    },
+                )
+
+                msg = await websocket.receive_json()
+                assert msg["type"] == "auth_ok", msg
+
+                await websocket.send_json(
+                    {
+                        "id": next_id(),
+                        "type": "render_template",
+                        "template": template,
+                        "variables": variables or {},
+                        "report_errors": True,
+                    },
+                )
+                msg = await websocket.receive_json()
+                if msg["type"] == "event":
+                    raise HomeAssistantError(msg["event"]["error"])
+
+                assert msg["type"] == "result", msg
+                assert msg["success"], msg
+
+                msg = await websocket.receive_json()
+                assert msg["type"] == "event", msg
+
+                return msg["event"]["result"]
+
+    async def trigger_service(
+        self,
+        domain: str,
+        service: str,
+        service_data: Optional[Mapping[str, Any]] = None,
+        target: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        current_id = 0
+
+        def next_id() -> int:
+            nonlocal current_id
+            current_id += 1
+            return current_id
+
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                self.websocket_api_url, max_msg_size=0
+            ) as websocket:
+                # Authenticate
+                msg = await websocket.receive_json()
+                assert msg["type"] == "auth_required", msg
+
+                await websocket.send_json(
+                    {
+                        "type": "auth",
+                        "access_token": self.token,
+                    },
+                )
+
+                msg = await websocket.receive_json()
+                assert msg["type"] == "auth_ok", msg
+
+                await websocket.send_json(
+                    {
+                        "id": next_id(),
+                        "type": "call_service",
+                        "domain": domain,
+                        "service": service,
+                        "service_data": service_data or {},
+                        "target": target or {},
+                    },
+                )
+                msg = await websocket.receive_json()
+                assert msg["success"], msg
+
+    async def handle_intent(
+        self,
+        intent_name: str,
+        language: str,
+        *,
+        data: Optional[Mapping[str, Any]] = None,
+        device_id: Optional[str] = None,
+        satellite_id: Optional[str] = None,
+        assistant: Optional[str] = "conversation",
+    ) -> Dict[str, Any]:
+        """Handle intent with REST API and return response."""
+        headers = {"Authorization": f"Bearer {self.token}"}
+
+        async with aiohttp.ClientSession() as session:
+            web_response = await session.post(
+                f"{self.api_url}/intent/handle",
+                json={
+                    "name": intent_name,
+                    "data": data,
+                    "language": language,
+                    "assistant": assistant,
+                    "device_id": device_id,
+                    "satellite_id": satellite_id,
+                },
+                headers=headers,
+            )
+            assert web_response.status == 200
+            return await web_response.json()

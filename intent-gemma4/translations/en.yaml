@@ -1,0 +1,12 @@
+---
+configuration:
+  hf_token:
+    name: HuggingFace Token
+    description: >-
+      API token for HuggingFace for faster model downloading.
+  debug_logging:
+    name: Debug logging
+    description: >-
+      Enable debug logging.
+network:
+  10500/tcp: intent-gemma4 Wyoming Protocol

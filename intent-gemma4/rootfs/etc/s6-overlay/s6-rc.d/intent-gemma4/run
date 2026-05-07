@@ -1,0 +1,31 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Start intent-gemma4 service
+# ==============================================================================
+cd /usr/src
+
+flags=()
+
+if bashio::config.true 'debug_logging'; then
+    flags+=('--debug')
+fi
+
+export HF_HOME=/data/cache
+export HF_TOKEN="$(bashio::config 'hf_token')"
+
+tools_file=/data/tools.yaml
+if [ ! -f "${tools_file}" ]; then
+  # Default tools
+  cp ./tools.yaml "${tools_file}"
+fi
+
+exec python3 app.py \
+    --uri 'tcp://0.0.0.0:10500' \
+    --hass-token "${SUPERVISOR_TOKEN}" \
+    --hass-api 'http://supervisor/core/api' \
+    --http-host 0.0.0.0 \
+    --http-port 5000 \
+    --tools "${tools_file}" \
+    --prime-model \
+    ${flags[@]}

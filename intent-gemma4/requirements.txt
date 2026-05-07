@@ -1,0 +1,8 @@
+aiohttp
+llama-cpp-python
+huggingface-hub
+ruamel.yaml
+flask
+voluptuous
+jinja2
+wyoming[zeroconf]
