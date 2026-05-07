@@ -157,6 +157,7 @@ class HomeAssistant:
                     area = areas.get(current_area_id)
                     if area:
                         current_area_name = area["name"]
+                        current_floor_id = area.get("floor_id")
 
         return InfoForRecognition(
             current_area_id=current_area_id,
@@ -203,11 +204,11 @@ class HomeAssistant:
                     },
                 )
                 msg = await websocket.receive_json()
-                assert msg["type"] == "result"
+                assert msg["type"] == "result", msg
                 assert msg["success"], msg
 
                 msg = await websocket.receive_json()
-                assert msg["type"] == "event"
+                assert msg["type"] == "event", msg
 
                 return msg["event"]["result"]
 

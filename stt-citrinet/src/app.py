@@ -108,7 +108,7 @@ async def main() -> None:
 
     _LOGGER.info("Loading %s (language=%s)", args.model, language)
     model = cast(ASRModel, ASRModel.from_pretrained(model_name=args.model))
-    model.eval()
+    model.eval()  # <-- absolutely critical
     _LOGGER.debug("Loaded %s", args.model)
 
     # Run web UI
