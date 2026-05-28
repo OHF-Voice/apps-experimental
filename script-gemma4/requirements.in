@@ -1,0 +1,5 @@
+aiohttp
+flask
+llama-cpp-python
+huggingface-hub
+wyoming>=1.9.0
