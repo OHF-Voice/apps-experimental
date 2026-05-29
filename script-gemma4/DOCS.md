@@ -68,6 +68,10 @@ A special `satellite` variable is passed to each script with information about t
     - Search order for media players is satellite device, satellite area, and satellite floor
 - `music_player_id` - id of the closest [media player][] that supports [Music Assistant][] 
     - Search order for music players is satellite device, satellite area, and satellite floor
+- `music_assistant_id` - config entry id of [Music Assistant][]
+    - For calling actions like `music_assistant.search`
+- `language` - language code of the input text
+    - May be something like `de`, `en_GB`, or `pt-BR`
 
 ## Multiple commands
 

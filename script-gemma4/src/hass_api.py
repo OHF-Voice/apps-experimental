@@ -36,6 +36,7 @@ class SatelliteInfo:
     floor_id: Optional[str] = None
     media_player_id: Optional[str] = None
     music_player_id: Optional[str] = None
+    music_assistant_id: Optional[str] = None
 
     def as_dict(self) -> Dict[str, str]:
         info_dict: Dict[str, str] = {}
@@ -51,6 +52,8 @@ class SatelliteInfo:
             info_dict["media_player_id"] = self.media_player_id
         if self.music_player_id:
             info_dict["music_player_id"] = self.music_player_id
+        if self.music_assistant_id:
+            info_dict["music_assistant_id"] = self.music_assistant_id
 
         return info_dict
 
@@ -156,10 +159,10 @@ class HomeAssistant:
                 # }
 
                 # States
-                await websocket.send_json({"id": next_id(), "type": "get_states"})
-                msg = await websocket.receive_json()
-                assert msg["success"], msg
-                states = {state["entity_id"]: state for state in msg["result"]}
+                # await websocket.send_json({"id": next_id(), "type": "get_states"})
+                # msg = await websocket.receive_json()
+                # assert msg["success"], msg
+                # states = {state["entity_id"]: state for state in msg["result"]}
 
                 # Media players
                 await websocket.send_json(
@@ -192,13 +195,13 @@ class HomeAssistant:
                 # Music players (that support SEARCH_MEDIA for Music Assistant)
                 music_players: Dict[str, Dict[str, Any]] = {}
                 for mp_id, mp_info in media_players.items():
-                    mp_features = (
-                        states.get(mp_id, {})
-                        .get("attributes", {})
-                        .get("supported_features", 0)
-                    )
-                    if (mp_features & SEARCH_MEDIA) == SEARCH_MEDIA:
-                        music_players[mp_id] = mp_info
+                    if mp_info.get("platform") != "music_assistant":
+                        continue
+
+                    if not mp_info.get("config_entry_id"):
+                        continue
+
+                    music_players[mp_id] = mp_info
 
                 if satellite_info.entity_id:
                     # Get area of assist_satellite entity
@@ -242,6 +245,9 @@ class HomeAssistant:
                             mp_id in music_players
                         ):
                             satellite_info.music_player_id = mp_id
+                            satellite_info.music_assistant_id = mp_info.get(
+                                "config_entry_id"
+                            )
                             _LOGGER.debug("Selected music player by device: %s", mp_id)
 
                 if satellite_info.area_id:
@@ -266,6 +272,9 @@ class HomeAssistant:
                             mp_id in music_players
                         ):
                             satellite_info.music_player_id = mp_id
+                            satellite_info.music_assistant_id = mp_info.get(
+                                "config_entry_id"
+                            )
                             _LOGGER.debug("Selected music player by area: %s", mp_id)
 
                 # Look for media/music player on the same floor
@@ -285,6 +294,9 @@ class HomeAssistant:
                             mp_id in music_players
                         ):
                             satellite_info.music_player_id = mp_id
+                            satellite_info.music_assistant_id = mp_info.get(
+                                "config_entry_id"
+                            )
                             _LOGGER.debug("Selected music player by floor: %s", mp_id)
 
         return satellite_info

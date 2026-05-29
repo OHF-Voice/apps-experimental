@@ -1,0 +1,49 @@
+---
+blueprint:
+  name: Play music
+  description: Search for music and play it
+  domain: script
+
+mode: parallel
+
+fields:
+  search_query:
+    name: Search query
+    required: true
+    selector:
+      text:
+
+sequence:
+  - if:
+      - condition: template
+        value_template: "{{ search_query.strip() | length > 0 }}"
+    then:
+      - action: music_assistant.search
+        metadata: {}
+        data:
+          limit: 1
+          library_only: false
+          config_entry_id: "{{ satellite.music_assistant_id }}"
+          name: "{{ search_query }}"
+          media_type:
+            - album
+            - artist
+            - track
+        response_variable: search_results
+      - if:
+          - condition: template
+            value_template: >-
+              {{ (search_results.artists | count > 0) or (search_results.albums | count > 0) or (search_results.tracks | count > 0) }}
+        then:
+          - action: music_assistant.play_media
+            target:
+              entity_id: "{{ satellite.music_player_id }}"
+            data:
+              media_id: |-
+                {% if search_results.tracks %}
+                {{ search_results.tracks[0].uri }}
+                {% elif search_results.albums %}
+                {{ search_results.albums[0].uri }}
+                {% elif search_results.artists %}
+                {{ search_results.artists[0].uri }}
+                {% endif %}
