@@ -382,7 +382,10 @@ class HomeAssistant:
 
                 scripts = msg["result"]["script"]
                 for script_id in sorted(exposed_scripts):
-                    script = scripts[script_id]
+                    script = scripts.get(script_id)
+                    if not script:
+                        continue
+
                     tool_dict: Dict[str, Any] = {
                         "type": "function",
                         "function": {
