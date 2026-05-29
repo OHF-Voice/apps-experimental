@@ -1,6 +1,6 @@
 # Gemma 4 Script Runner
 
-A [conversation][] agent built with [Gemma 4][gemma4] that runs Home Assistant [scripts][] that have been [expose][expose] to voice.
+A [conversation][] agent built with [Gemma 4][gemma4] that runs Home Assistant [scripts][] that have been [expose][] to voice.
 
 This app is a work in progress, so expect things to be unpolished!
 
@@ -18,6 +18,10 @@ If you'd like to try the higher-precision official Q8 quantization, use these se
 - hf_repo: `ggml-org/gemma-4-E2B-it-GGUF`
 - hf_filename: `gemma-4-E2B-it-Q8_0.gguf`
 
+### Context size
+
+The size of the [llama.cpp][] context (`n_ctx`) is automatically determined based on the size of the generated tools. If your scripts have large lists of entities and areas, a larger context size will be needed and increase app RAM usage. Decreasing the number of [exposed][expose] entities can help keep the context size small.
+
 ## Installation and first boot
 
 Installing the app can take quite a while, since it builds an optimized version of [llama.cpp] for your CPU.
@@ -28,9 +32,11 @@ Once the app boots, check "Settings -> Devices & services" for a newly discovere
 
 ## Scripts and selectors
 
-Create scripts and [expose][] them to voice. You **must** also expose any entities that you want to be able to refer to by name. After any changes are made, restart the app.
+Create scripts and [expose][] them to voice by "More Info -> Settings -> Voice assistants" and clicking "Expose". You **must** also expose any entities that you want to be able to refer to by name (or [alias][aliases]). After any changes are made, restart the app.
 
 Give your scripts descriptive names and consider adding a description with more details. Add [fields][] to have Gemma 4 pass variables to your script. Make sure to add descriptions!
+
+See the [blueprints](blueprints) for example scripts.
 
 The following field [selectors][] are supported:
 
@@ -75,7 +81,7 @@ A special `satellite` variable is passed to each script with information about t
 
 ## Multiple commands
 
-Gemma 4 can recognize and run multiple scripts. This works best with larger models, such as the official Q8 version (see above).
+Gemma 4 can recognize and run multiple scripts, for example "turn on the lights and play The Beatles". This works best with larger models, such as the official Q8 version (see above). Make sure to write your scripts so that more than one could run at a time!
 
 ## State caching
 
@@ -84,6 +90,10 @@ To keep the speed reasonable, the agent caches the LLM state on startup whenever
 ## Tool call caching
 
 If a sentence has been previously recognized, its result will be cached and the LLM will be skipped next time. The number of cached sentences is controlled by `tool_call_cache_size` (default: 100). The cache is cleared when the app restarts.
+
+## Web UI
+
+A small web interface is available that shows the generated LLM tools (OpenAI function spec). This is for debugging only.
 
 <!-- Links -->
 [conversation]: https://www.home-assistant.io/integrations/conversation/

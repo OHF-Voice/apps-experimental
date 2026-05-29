@@ -1,5 +1,23 @@
 ---
 configuration:
+  hf_repo:
+    name: Gemma4 repo id
+    description: >-
+      Hugging Face repository id for Gemma4 (GGUF).
+      Official repo: https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF
+  hf_filename:
+    name: Gemma4 filename
+    description: >-
+      Model filename for Gemma4 (GGUF) in the repo.
+      Official model: gemma-4-E2B-it-Q8_0.gguf
+  tool_call_cache_size:
+    name: Tool call cache size
+    description: >-
+      Number of sentences to remember tool calls for to avoid LLM overhead.
+  hf_token:
+    name: HuggingFace token
+    description: >-
+      API token for HuggingFace for faster model downloading.
   debug_logging:
     name: Debug logging
     description: >-
