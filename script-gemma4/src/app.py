@@ -60,7 +60,7 @@ async def main() -> None:
 
     _LOGGER.info("Loading scripts from Home Assistant")
     hass = HomeAssistant(token=args.hass_token, api_url=args.hass_api)
-    hass_info = await hass.get_info()
+    hass_info = await hass.get_home_info()
 
     script_tools = await hass.get_script_tools(hass_info)
     _LOGGER.debug("Loaded %s script(s)", len(script_tools))

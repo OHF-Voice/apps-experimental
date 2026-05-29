@@ -55,14 +55,19 @@ The following field [selectors][] are supported:
 
 ### satellite variable
 
-A special `satellite` variable is passed to each script with information about the [voice satellite][] that initiated the command. This variable has the following structure:
+A special `satellite` variable is passed to each script with information about the [voice satellite][] that initiated the command. This variable has the following properties:
 
-- `satellite.entity_id` - entity id of the [voice satellite][]
+- `entity_id` - entity id of the [voice satellite][]
     - Useful for [responding][announce] back with a message
-- `satellite.area_id` - id of the [area][] where the satellite is located
+- `area_id` - id of the [area][] where the satellite is located
     - Useful for commands that target the current area
-- `satellite.device_id` - id of the satellite's device (usually an [ESPHome][esphome] device)
+- `floor_id` - id of the [floor][] where the satellite is located
+- `device_id` - id of the satellite's device (usually an [ESPHome][esphome] device)
     - Useful if you want to play something on the media player associated with the satellite
+- `media_player_id` - id of the closest [media player][]
+    - Search order for media players is satellite device, satellite area, and satellite floor
+- `music_player_id` - id of the closest [media player][] that supports [Music Assistant][] 
+    - Search order for music players is satellite device, satellite area, and satellite floor
 
 ## Multiple commands
 
@@ -92,3 +97,5 @@ If a sentence has been previously recognized, its result will be cached and the 
 [llama.cpp]: https://github.com/ggml-org/llama.cpp
 [quantized version]: https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF
 [official model]: https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF
+[media player]: https://www.home-assistant.io/integrations/media_player
+[Music Assistant]: https://www.home-assistant.io/integrations/music_assistant/

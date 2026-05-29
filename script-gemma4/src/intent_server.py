@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from wyoming.asr import Transcript
 from wyoming.error import Error
@@ -11,6 +11,7 @@ from wyoming.info import Attribution, Describe, HandleModel, HandleProgram, Info
 from wyoming.server import AsyncEventHandler
 
 from const import AppState
+from hass_api import SatelliteInfo
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,19 +54,13 @@ class Gemma4EventHandler(AsyncEventHandler):
 
             try:
                 language = transcript.language or "en"
-                satellite_info: Dict[str, str] = {}
+                satellite_info: Optional[SatelliteInfo] = None
                 if transcript.context:
                     device_id = transcript.context.get("device_id")
-                    if device_id:
-                        satellite_info["device_id"] = device_id
                     satellite_id = transcript.context.get("satellite_id")
-                    if satellite_id:
-                        satellite_info["entity_id"] = satellite_id
-                    area_id = await self.state.hass.get_current_area(
+                    satellite_info = await self.state.hass.get_satellite_info(
                         device_id, satellite_id
                     )
-                    if area_id:
-                        satellite_info["area_id"] = area_id
 
                 tool_calls, response_text = self.state.recognizer.get_tool_calls(
                     transcript.text, language
@@ -81,7 +76,7 @@ class Gemma4EventHandler(AsyncEventHandler):
                 for tool_id, tool_args in tool_calls:
                     tool = self.state.tools[tool_id]
                     script_id = f"script.{tool_id}"
-                    variables = {}
+                    variables: Dict[str, Any] = {}
 
                     # Map names to ids
                     for var_key, var_value in tool_args.items():
@@ -89,7 +84,9 @@ class Gemma4EventHandler(AsyncEventHandler):
                         variables[var_key] = name_map.get(var_value, var_value)
 
                     if satellite_info:
-                        variables["satellite"] = satellite_info
+                        satellite_info_dict = satellite_info.as_dict()
+                        satellite_info_dict["language"] = language
+                        variables["satellite"] = satellite_info_dict
 
                     _LOGGER.debug(
                         "Calling script %s with variables %s", script_id, variables

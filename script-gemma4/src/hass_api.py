@@ -13,6 +13,8 @@ from models import ATTR_FRIENDLY_NAME, Area, Entity, Floor, State
 
 _LOGGER = logging.getLogger(__name__)
 
+SEARCH_MEDIA = 4194304  # MediaPlayerEntityFeature
+
 
 class HomeAssistantError(Exception):
     pass
@@ -24,6 +26,33 @@ class HomeAssistantInfo:
     entities: Dict[str, Entity]
     areas: Dict[str, Area]
     floors: Dict[str, Floor]
+
+
+@dataclass
+class SatelliteInfo:
+    entity_id: Optional[str] = None
+    device_id: Optional[str] = None
+    area_id: Optional[str] = None
+    floor_id: Optional[str] = None
+    media_player_id: Optional[str] = None
+    music_player_id: Optional[str] = None
+
+    def as_dict(self) -> Dict[str, str]:
+        info_dict: Dict[str, str] = {}
+        if self.entity_id:
+            info_dict["entity_id"] = self.entity_id
+        if self.device_id:
+            info_dict["device_id"] = self.device_id
+        if self.area_id:
+            info_dict["area_id"] = self.area_id
+        if self.floor_id:
+            info_dict["floor_id"] = self.floor_id
+        if self.media_player_id:
+            info_dict["media_player_id"] = self.media_player_id
+        if self.music_player_id:
+            info_dict["music_player_id"] = self.music_player_id
+
+        return info_dict
 
 
 @dataclass
@@ -64,11 +93,14 @@ class HomeAssistant:
             )
         )
 
-    async def get_current_area(
+    async def get_satellite_info(
         self, device_id: Optional[str] = None, satellite_id: Optional[str] = None
-    ) -> Optional[str]:
-        if (device_id is None) and (satellite_id is None):
-            return None
+    ) -> SatelliteInfo:
+        satellite_info = SatelliteInfo(device_id=device_id, entity_id=satellite_id)
+
+        if (satellite_info.device_id is None) and (satellite_info.entity_id is None):
+            # Can't get any more info
+            return satellite_info
 
         current_id = 0
 
@@ -105,32 +137,157 @@ class HomeAssistant:
                     device_info["id"]: device_info for device_info in msg["result"]
                 }
 
-                if satellite_id:
+                # Areas
+                await websocket.send_json(
+                    {"id": next_id(), "type": "config/area_registry/list"}
+                )
+                msg = await websocket.receive_json()
+                assert msg["success"], msg
+                areas = {area_info["area_id"]: area_info for area_info in msg["result"]}
+
+                # Floors
+                # await websocket.send_json(
+                #     {"id": next_id(), "type": "config/floor_registry/list"}
+                # )
+                # msg = await websocket.receive_json()
+                # assert msg["success"], msg
+                # floors = {
+                #     floor_info["floor_id"]: floor_info for floor_info in msg["result"]
+                # }
+
+                # States
+                await websocket.send_json({"id": next_id(), "type": "get_states"})
+                msg = await websocket.receive_json()
+                assert msg["success"], msg
+                states = {state["entity_id"]: state for state in msg["result"]}
+
+                # Media players
+                await websocket.send_json(
+                    {"id": next_id(), "type": "config/entity_registry/list"}
+                )
+                msg = await websocket.receive_json()
+                assert msg["success"], msg
+                media_players = {
+                    mp_info["entity_id"]: mp_info
+                    for mp_info in msg["result"]
+                    if mp_info["entity_id"].startswith("media_player.")
+                    and (mp_info.get("disabled_by") is None)
+                }
+
+                # Add area/floor info to media players
+                for mp_id, mp_info in media_players.items():
+                    mp_area_id = mp_info.get("area_id")
+                    mp_floor_id: Optional[str] = None
+                    if not mp_area_id:
+                        mp_device_id = mp_info.get("device_id")
+                        if mp_device_id:
+                            mp_area_id = devices.get(mp_device_id, {}).get("area_id")
+
+                    if mp_area_id:
+                        mp_info["area_id"] = mp_area_id
+                        mp_floor_id = areas.get(mp_area_id, {}).get("floor_id")
+                        if mp_floor_id:
+                            mp_info["floor_id"] = mp_floor_id
+
+                # Music players (that support SEARCH_MEDIA for Music Assistant)
+                music_players: Dict[str, Dict[str, Any]] = {}
+                for mp_id, mp_info in media_players.items():
+                    mp_features = (
+                        states.get(mp_id, {})
+                        .get("attributes", {})
+                        .get("supported_features", 0)
+                    )
+                    if (mp_features & SEARCH_MEDIA) == SEARCH_MEDIA:
+                        music_players[mp_id] = mp_info
+
+                if satellite_info.entity_id:
                     # Get area of assist_satellite entity
                     await websocket.send_json(
                         {
                             "id": next_id(),
                             "type": "config/entity_registry/get_entries",
-                            "entity_ids": [satellite_id],
+                            "entity_ids": [satellite_info.entity_id],
                         }
                     )
                     msg = await websocket.receive_json()
                     assert msg["success"], msg
-                    satellite_info = next(iter(msg["result"].values()))
-                    satellite_area_id = satellite_info.get("area_id")
+                    satellite_dict = next(iter(msg["result"].values()))
+                    satellite_area_id = satellite_dict.get("area_id")
                     if satellite_area_id:
                         return satellite_area_id
 
                     # Use device area
-                    device_id = satellite_info.get("device_id", device_id)
-                    if device_id:
-                        return devices.get(device_id, {}).get("area_id")
+                    satellite_info.device_id = satellite_dict.get(
+                        "device_id", device_id
+                    )
+                    if satellite_info.device_id:
+                        satellite_info.area_id = devices.get(device_id, {}).get(
+                            "area_id"
+                        )
 
-                if device_id:
+                if satellite_info.device_id:
                     # Get area from device instead
-                    return devices.get(device_id, {}).get("area_id")
+                    satellite_info.area_id = devices.get(device_id, {}).get("area_id")
 
-        return None
+                    # Look for media/music player on the same device
+                    for mp_id, mp_info in media_players.items():
+                        if mp_info.get("device_id") != satellite_info.device_id:
+                            continue
+
+                        if not satellite_info.media_player_id:
+                            satellite_info.media_player_id = mp_id
+                            _LOGGER.debug("Selected media player by device: %s", mp_id)
+
+                        if (not satellite_info.music_player_id) and (
+                            mp_id in music_players
+                        ):
+                            satellite_info.music_player_id = mp_id
+                            _LOGGER.debug("Selected music player by device: %s", mp_id)
+
+                if satellite_info.area_id:
+                    satellite_info.floor_id = areas.get(satellite_info.area_id, {}).get(
+                        "floor_id"
+                    )
+
+                # Look for media/music player in the same area
+                if (
+                    (not satellite_info.media_player_id)
+                    or (not satellite_info.music_player_id)
+                ) and satellite_info.area_id:
+                    for mp_id, mp_info in media_players.items():
+                        if mp_info.get("area_id") != satellite_info.area_id:
+                            continue
+
+                        if not satellite_info.media_player_id:
+                            satellite_info.media_player_id = mp_id
+                            _LOGGER.debug("Selected media player by area: %s", mp_id)
+
+                        if (not satellite_info.music_player_id) and (
+                            mp_id in music_players
+                        ):
+                            satellite_info.music_player_id = mp_id
+                            _LOGGER.debug("Selected music player by area: %s", mp_id)
+
+                # Look for media/music player on the same floor
+                if (
+                    (not satellite_info.media_player_id)
+                    or (not satellite_info.music_player_id)
+                ) and satellite_info.floor_id:
+                    for mp_id, mp_info in media_players.items():
+                        if mp_info.get("floor_id") != satellite_info.floor_id:
+                            continue
+
+                        if not satellite_info.media_player_id:
+                            satellite_info.media_player_id = mp_id
+                            _LOGGER.debug("Selected media player by floor: %s", mp_id)
+
+                        if (not satellite_info.music_player_id) and (
+                            mp_id in music_players
+                        ):
+                            satellite_info.music_player_id = mp_id
+                            _LOGGER.debug("Selected music player by floor: %s", mp_id)
+
+        return satellite_info
 
     async def get_script_tools(self, info: HomeAssistantInfo) -> List[Tool]:
         tools: List[Tool] = []
@@ -337,7 +494,7 @@ class HomeAssistant:
 
         return tools
 
-    async def get_info(self) -> HomeAssistantInfo:
+    async def get_home_info(self) -> HomeAssistantInfo:
         """Get necessary information for intent recognition."""
         current_id = 0
 
