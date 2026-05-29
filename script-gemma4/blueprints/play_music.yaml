@@ -53,8 +53,8 @@ sequence:
           config_entry_id: "{{ satellite.music_assistant_id }}"
           media_type: "{{ media_type }}"
           name: "{{ name }}"
-          artist: "{{ artist | default('', true) }}"
-          album: "{{ album | default('', true) }}"
+          artist: "{% if media_type != 'artist' %}{{ artist | default('', true) }}{% endif %}"
+          album: "{% if media_type != 'album' %}{{ album | default('', true) }}{% endif %}"
         response_variable: search_results
       - if:
           - condition: template
