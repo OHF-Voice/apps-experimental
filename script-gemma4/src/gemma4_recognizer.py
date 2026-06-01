@@ -139,15 +139,18 @@ class Gemma4Recognizer:
                 rebuild_state = False
 
         if rebuild_state:
-            _LOGGER.debug("Cache miss. Rebuilding state")
+            _LOGGER.info("Retraining...")
             if self.cache is not None:
                 self.cache.clear()
 
+            start_time = time.monotonic()
             self.llm.create_chat_completion(
                 messages=[self.system_message],  # type: ignore
                 tools=self.tools,  # type: ignore
                 max_tokens=0,
             )
+            end_time = time.monotonic()
+            _LOGGER.debug("Rebuilt state in %s second(s)", end_time - start_time)
             _LOGGER.debug("Saving state: %s", self.state_path)
             with open(self.state_path, "wb") as state_file:
                 state = self.llm.save_state()

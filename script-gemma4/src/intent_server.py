@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
 from wyoming.asr import Transcript
@@ -14,6 +15,7 @@ from const import AppState
 from hass_api import SatelliteInfo
 
 _LOGGER = logging.getLogger(__name__)
+_LLAMA_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
 
 class Gemma4EventHandler(AsyncEventHandler):
@@ -55,15 +57,20 @@ class Gemma4EventHandler(AsyncEventHandler):
             try:
                 language = transcript.language or "en"
                 satellite_info: Optional[SatelliteInfo] = None
+                satellite_info_task: Optional[asyncio.Task] = None
                 if transcript.context:
                     device_id = transcript.context.get("device_id")
                     satellite_id = transcript.context.get("satellite_id")
-                    satellite_info = await self.state.hass.get_satellite_info(
-                        device_id, satellite_id
+                    satellite_info_task = asyncio.create_task(
+                        self.state.hass.get_satellite_info(device_id, satellite_id)
                     )
 
-                tool_calls, response_text = self.state.recognizer.get_tool_calls(
-                    transcript.text, language
+                loop = asyncio.get_running_loop()
+                tool_calls, response_text = await loop.run_in_executor(
+                    _LLAMA_EXECUTOR,
+                    self.state.recognizer.get_tool_calls,
+                    transcript.text,
+                    language,
                 )
                 if not tool_calls:
                     await self.write_event(
@@ -73,6 +80,9 @@ class Gemma4EventHandler(AsyncEventHandler):
                     )
                     return True
 
+                if satellite_info_task:
+                    satellite_info = await satellite_info_task
+
                 for tool_id, tool_args in tool_calls:
                     tool = self.state.tools[tool_id]
                     script_id = f"script.{tool_id}"
@@ -81,7 +91,14 @@ class Gemma4EventHandler(AsyncEventHandler):
                     # Map names to ids
                     for var_key, var_value in tool_args.items():
                         name_map = tool.name_map.get(var_key, {})
-                        variables[var_key] = name_map.get(var_value, var_value)
+                        var_mapped_value = name_map.get(var_value)
+                        if var_mapped_value is not None:
+                            _LOGGER.debug(
+                                "Mapping '%s' -> '%s'", var_value, var_mapped_value
+                            )
+                            var_value = var_mapped_value
+
+                        variables[var_key] = var_mapped_value
 
                     if satellite_info:
                         satellite_info_dict = satellite_info.as_dict()
