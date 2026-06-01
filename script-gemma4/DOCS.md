@@ -4,6 +4,26 @@ A [conversation][] agent built with [Gemma 4][gemma4] that runs Home Assistant [
 
 This app is a work in progress, so expect things to be unpolished!
 
+## Getting started
+
+To install the app, first add `https://github.com/OHF-Voice/apps-experimental` to your app repositories by:
+
+1. Go to "Settings -> Apps"
+2. Click the "Install app" button
+3. In the 3-dot menu, click "Repositories"
+4. Click the "Add" button
+
+After adding the repository, make sure you're in in "Settings -> Apps" and "Install apps". You may need to click "Check for updates" from the 3-dot menu.
+
+Scroll down and find "OHF Experimental Apps" and choose "Gemma 4 Script Runner", then click "Install". To check on installation progress, go to "Settings -> System -> Logs" and change in to "Supervisor".
+
+Installing the app can take quite a while, since it builds an optimized version of [llama.cpp][] for your CPU.
+
+On first boot of the app, [Gemma 4][gemma4] is downloaded (about 4GB). If you have a Hugging Face account, putting your token in the app settings (`hf_token`) before starting the app to speed up the download.
+
+Once the app boots, check "Settings -> Devices & services" for a newly discovered voice [wyoming][] conversation agent called "Gemma 4 Script Runner" and add it. Select this agent (`script-gemma4`) in your voice pipeline, optionally checking "Prefer handling commands locally" if you want Home Assistant to try to recognize commands before sending them to the LLM.
+
+
 ## LLM
 
 Gemma 4 is run on the CPU using [llama.cpp][] and a [quantized version][] of the [official model][]. Changing the quantization level, such as from Q5 to Q8, will change the accuracy, speed, and RAM usage of the agent.
@@ -95,6 +115,15 @@ If a sentence has been previously recognized, its result will be cached and the 
 
 A small web interface is available that shows the generated LLM tools (OpenAI function spec). This is for debugging only.
 
+## Benchmarks
+
+Seconds per command with a 5 scripts and 35 exposed entities.
+
+- AMD Ryzen 9 5950X - 0.5-1.5 seconds
+- Intel Core i5-4570T - 2-3 seconds
+- Raspberry Pi 5 - 3-6 seconds
+- Home Assistant Green - 15-20 seconds
+
 <!-- Links -->
 [conversation]: https://www.home-assistant.io/integrations/conversation/
 [gemma4]: https://deepmind.google/models/gemma/gemma-4/
@@ -113,3 +142,4 @@ A small web interface is available that shows the generated LLM tools (OpenAI fu
 [official model]: https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF
 [media player]: https://www.home-assistant.io/integrations/media_player
 [Music Assistant]: https://www.home-assistant.io/integrations/music_assistant/
+[wyoming]: https://www.home-assistant.io/integrations/wyoming/
