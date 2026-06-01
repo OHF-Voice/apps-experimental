@@ -1,7 +1,8 @@
+import json
 import logging
 import threading
 
-from flask import Flask, jsonify, url_for
+from flask import Flask, Response, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from const import AppState
@@ -14,13 +15,16 @@ def make_web_server(state: AppState) -> Flask:
     flask_app.wsgi_app = ProxyFix(flask_app.wsgi_app, x_proto=1, x_host=1)  # type: ignore[method-assign]
     flask_app.wsgi_app = IngressPrefixMiddleware(flask_app.wsgi_app)  # type: ignore[method-assign]
 
+    tools_list = [t.tool for t in state.tools.values()]
+    tools_json = json.dumps(tools_list, indent=2)
+
     @flask_app.context_processor
     def inject_url_for():
         return dict(url_for=url_for)  # pylint: disable=use-dict-literal
 
     @flask_app.route("/", methods=["GET"])
     def index():
-        return jsonify(state.tools)
+        return Response(tools_json, mimetype="application/json")
 
     @flask_app.route("/health")
     def health():

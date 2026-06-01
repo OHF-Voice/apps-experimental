@@ -1,6 +1,6 @@
 # Gemma 4 Script Runner
 
-A [conversation][] agent built with [Gemma 4][gemma4] that runs Home Assistant [scripts][] that have been [expose][] to voice.
+A [conversation][] agent built with [Gemma 4][gemma4] that runs Home Assistant [scripts][] which have been [expose][] to voice.
 
 This app is a work in progress, so expect things to be unpolished!
 
@@ -24,9 +24,9 @@ The size of the [llama.cpp][] context (`n_ctx`) is automatically determined base
 
 ## Installation and first boot
 
-Installing the app can take quite a while, since it builds an optimized version of [llama.cpp] for your CPU.
+Installing the app can take quite a while, since it builds an optimized version of [llama.cpp][] for your CPU.
 
-On first boot of the app, [Gemma 4][gemma4] is downloaded (about 4GB). If you have a Hugging Face account, putting your token in the app settings (`hf_token`) before starting the app may speed up the download.
+On first boot of the app, [Gemma 4][gemma4] is downloaded (about 4GB). If you have a Hugging Face account, putting your token in the app settings (`hf_token`) before starting the app to speed up the download.
 
 Once the app boots, check "Settings -> Devices & services" for a newly discovered voice conversation agent and add it. Select this agent (`script-gemma4`) in your voice pipeline, optionally checking "Prefer handling commands locally" if you want Home Assistant to try to recognize commands before sending them to the LLM.
 

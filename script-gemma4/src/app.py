@@ -2,7 +2,9 @@
 
 import argparse
 import asyncio
+import contextlib
 import logging
+import signal
 from functools import partial
 
 from wyoming.server import AsyncServer
@@ -89,8 +91,8 @@ async def main() -> None:
         "Loading Gemma 4 (repo=%s, filename=%s)", args.hf_repo, args.hf_filename
     )
     recognizer = Gemma4Recognizer(
-        repo_id=args.hf_repo,
-        filename=args.hf_filename,
+        repo_id=args.hf_repo.strip(),
+        filename=args.hf_filename.strip(),
         state_path=args.llama_state,
         cache_size=args.tool_call_cache_size,
         n_ctx=args.n_ctx if args.n_ctx > 0 else None,
@@ -115,10 +117,26 @@ async def main() -> None:
     server = AsyncServer.from_uri(args.uri)
     _LOGGER.info("Ready")
 
+    # Handle graceful termination
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+
+    def request_stop():
+        stop_event.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, request_stop)
+
+    server_task = asyncio.create_task(server.run(partial(Gemma4EventHandler, state)))
+
     try:
-        await server.run(partial(Gemma4EventHandler, state))
-    except KeyboardInterrupt:
-        pass
+        await stop_event.wait()
+    finally:
+        _LOGGER.info("Shutting down")
+
+        server_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await server_task
 
 
 # -----------------------------------------------------------------------------
