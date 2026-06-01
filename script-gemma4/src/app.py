@@ -49,6 +49,21 @@ async def main() -> None:
     parser.add_argument(
         "--llama-state", required=True, help="Path to save llama.cpp state"
     )
+    parser.add_argument(
+        "--n-ctx", type=int, default=0, help="Size of model context (0 = auto)"
+    )
+    parser.add_argument(
+        "--n-ctx-overhead",
+        type=int,
+        default=128,
+        help="Number of tokens expected beyond system prompt (only when n_ctx = auto)",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=64,
+        help="Maximum number of tokens the model can generate",
+    )
     #
     parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to console"
@@ -78,6 +93,9 @@ async def main() -> None:
         filename=args.hf_filename,
         state_path=args.llama_state,
         cache_size=args.tool_call_cache_size,
+        n_ctx=args.n_ctx if args.n_ctx > 0 else None,
+        n_ctx_overhead=args.n_ctx_overhead,
+        max_tokens=args.max_tokens,
     )
 
     tools_list = [t.tool for t in script_tools]

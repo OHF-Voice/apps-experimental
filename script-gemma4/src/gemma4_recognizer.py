@@ -58,6 +58,7 @@ class Gemma4Recognizer:
         self.max_tokens = max_tokens
         self.temperature = 0.0
         self.top_p = 1.0
+        self.top_k = 1
         self.enable_thinking = False
         self.tool_choice: str = "auto"
         self.tools: Optional[List[Dict[str, Any]]] = None
@@ -181,6 +182,7 @@ class Gemma4Recognizer:
                 tools=self.tools,  # type: ignore
                 temperature=self.temperature,
                 top_p=self.top_p,
+                top_k=self.top_k,
                 max_tokens=self.max_tokens,
                 tool_choice=self.tool_choice,  # type: ignore
             ),

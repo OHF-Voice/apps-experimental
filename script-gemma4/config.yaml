@@ -1,5 +1,5 @@
 ---
-version: 1.1.0
+version: 1.2.0
 slug: script-gemma4
 name: Gemma 4 Script Runner
 description: Gemma 4 Script Runner
@@ -16,12 +16,18 @@ options:
   hf_model: "google_gemma-4-E2B-it-Q5_K_M.gguf"
   tool_call_cache_size: 100
   hf_token: ""
+  n_ctx: 0
+  n_ctx_overhead: 128
+  max_tokens: 64
   debug_logging: false
 schema:
   hf_repo: str
   hf_model: str
   tool_call_cache_size: int
   hf_token: str
+  n_ctx: int
+  n_ctx_overhead: int
+  max_tokens: int
   debug_logging: bool
 ports:
   "10500/tcp": null
