@@ -14,7 +14,7 @@ fi
 export HF_HOME=/data/cache
 export HF_TOKEN="$(bashio::config 'hf_token')"
 
-exec python3 app.py \
+exec .venv/bin/python3 app.py \
     --uri 'tcp://0.0.0.0:10500' \
     --hass-token "${SUPERVISOR_TOKEN}" \
     --hass-api 'http://supervisor/core/api' \
