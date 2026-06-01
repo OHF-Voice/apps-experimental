@@ -3,7 +3,7 @@
 A [conversation][] agent built with [Gemma 4][gemma4] that runs Home Assistant [scripts][] which have been [expose][] to voice.
 
 This app is a work in progress, so expect things to be unpolished!
-![architecture](https://github.com/OHF-Voice/apps-experimental/blob/main/script-gemma4/res/logo.png)
+![architecture](https://github.com/OHF-Voice/apps-experimental/blob/main/script-gemma4/res/architecture.png)
 
 ## Getting started
 

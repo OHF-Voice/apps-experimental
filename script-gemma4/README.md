@@ -6,7 +6,7 @@ This app is a work in progress, so expect things to be unpolished!
 
 See [the documentation][docs] for more details.
 
-![architecture](https://github.com/OHF-Voice/apps-experimental/blob/main/script-gemma4/res/logo.png)
+![architecture](https://github.com/OHF-Voice/apps-experimental/blob/main/script-gemma4/res/architecture.png)
 
 <!-- Links -->
 [conversation]: https://www.home-assistant.io/integrations/conversation/
