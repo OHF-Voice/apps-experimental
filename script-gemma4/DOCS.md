@@ -3,6 +3,7 @@
 A [conversation][] agent built with [Gemma 4][gemma4] that runs Home Assistant [scripts][] which have been [expose][] to voice.
 
 This app is a work in progress, so expect things to be unpolished!
+![architecture](https://github.com/OHF-Voice/apps-experimental/blob/main/script-gemma4/res/logo.png)
 
 ## Getting started
 
@@ -56,7 +57,7 @@ Create scripts and [expose][] them to voice by "More Info -> Settings -> Voice a
 
 Give your scripts descriptive names and consider adding a description with more details. Add [fields][] to have Gemma 4 pass variables to your script. Make sure to add descriptions!
 
-See the [blueprints](blueprints) for example scripts.
+See the [blueprints][blueprints] for example scripts.
 
 The following field [selectors][] are supported:
 
@@ -143,3 +144,4 @@ Seconds per command with a 5 scripts and 35 exposed entities.
 [media player]: https://www.home-assistant.io/integrations/media_player
 [Music Assistant]: https://www.home-assistant.io/integrations/music_assistant/
 [wyoming]: https://www.home-assistant.io/integrations/wyoming/
+[blueprints]: https://github.com/OHF-Voice/apps-experimental/tree/main/script-gemma4/blueprints
