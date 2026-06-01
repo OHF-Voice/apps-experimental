@@ -18,6 +18,18 @@ configuration:
     name: HuggingFace token
     description: >-
       API token for HuggingFace for faster model downloading.
+  n_ctx:
+    name: Context size
+    description: >-
+      Size of model context in tokens (0 = auto).
+  n_ctx_overhead:
+    name: Context overhead
+    description: >-
+      Number of tokens expected beyond user prompt (only when n_ctx = auto).
+  max_tokens:
+    name: Maximum tokens
+    description: >-
+      Maximum number of tokens the model is allowed to generate.
   debug_logging:
     name: Debug logging
     description: >-

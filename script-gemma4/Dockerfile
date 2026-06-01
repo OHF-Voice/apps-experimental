@@ -1,6 +1,6 @@
 # Build llama-cpp-python separately to avoid rebuilding.
 # We always compile from source to maximize optimizations.
-FROM ghcr.io/home-assistant/base-debian:bookworm as llama
+FROM ghcr.io/home-assistant/base-debian:bookworm AS llama
 
 WORKDIR /usr/src
 
@@ -10,6 +10,7 @@ RUN \
         python3 \
         python3-pip \
         python3-dev \
+        python3-venv \
         build-essential \
         cmake \
         ninja-build
@@ -36,7 +37,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Install
 WORKDIR /usr/src
 
-COPY --from=build /usr/src/.venv/ ./venv/
+COPY --from=llama /usr/src/.venv/ ./.venv/
 
 COPY requirements.txt ./
 
@@ -46,7 +47,7 @@ RUN \
         curl \
         python3 \
         python3-pip \
-        python3-dev \
+        libgomp1 \
     && .venv/bin/pip install --no-cache-dir \
         -r ./requirements.txt \
     && rm -rf /var/lib/apt/lists/*
