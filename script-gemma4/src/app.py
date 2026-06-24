@@ -5,11 +5,12 @@ import asyncio
 import contextlib
 import logging
 import signal
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 from wyoming.server import AsyncServer
 
-from const import AppState
+from const import BASE_DIR, AppState
 from gemma4_recognizer import Gemma4Recognizer
 from hass_api import HomeAssistant
 from intent_server import Gemma4EventHandler
@@ -61,10 +62,23 @@ async def main() -> None:
         help="Number of tokens expected beyond system prompt (only when n_ctx = auto)",
     )
     parser.add_argument(
+        "--n-threads",
+        type=int,
+        default=0,
+        help="CPU threads for the model (0 = llama.cpp default). "
+        "Throughput is memory-bandwidth bound, so leave headroom for Home "
+        "Assistant on the same box rather than using every core.",
+    )
+    parser.add_argument(
         "--max-tokens",
         type=int,
         default=64,
         help="Maximum number of tokens the model can generate",
+    )
+    parser.add_argument(
+        "--benchmark-fixture",
+        default=None,
+        help="Path to benchmark fixture YAML (default: bundled benchmark.yaml)",
     )
     #
     parser.add_argument(
@@ -97,20 +111,26 @@ async def main() -> None:
         cache_size=args.tool_call_cache_size,
         n_ctx=args.n_ctx if args.n_ctx > 0 else None,
         n_ctx_overhead=args.n_ctx_overhead,
+        n_threads=args.n_threads if args.n_threads > 0 else None,
         max_tokens=args.max_tokens,
     )
 
     tools_list = [t.tool for t in script_tools]
     recognizer.load(tools_list)
 
+    # Single worker serializes all model access (live recognition + benchmark).
+    llama_executor = ThreadPoolExecutor(max_workers=1)
+
     state = AppState(
         hass=hass,
         hass_info=hass_info,
         tools={t.name: t for t in script_tools},
         recognizer=recognizer,
+        llama_executor=llama_executor,
     )
 
-    flask_app = make_web_server(state)
+    benchmark_fixture_path = args.benchmark_fixture or (BASE_DIR / "benchmark.yaml")
+    flask_app = make_web_server(state, benchmark_fixture_path)
     flask_thread = run_web_server(flask_app, host=args.http_host, port=args.http_port)
     flask_thread.start()
 

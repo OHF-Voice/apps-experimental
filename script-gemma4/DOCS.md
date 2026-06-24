@@ -43,6 +43,10 @@ If you'd like to try the higher-precision official Q8 quantization, use these se
 
 The size of the [llama.cpp][] context (`n_ctx`) is automatically determined based on the size of the generated tools. If your scripts have large lists of entities and areas, a larger context size will be needed and increase app RAM usage. Decreasing the number of [exposed][expose] entities can help keep the context size small.
 
+### CPU threads
+
+The number of CPU threads used by the model is set with `n_threads` (default: `0`, which uses llama.cpp's own default). Generation speed is limited by memory bandwidth rather than CPU, so adding threads past a few cores gives little or no speedup. Because the model's threads synchronize on every token, a thread that gets descheduled by other work (such as Home Assistant running on the same machine) stalls the rest, causing latency spikes under load. On a box shared with Home Assistant, leave a core or two free (for example, set `n_threads` to `2` on a 4-core device) for more consistent response times.
+
 ## Installation and first boot
 
 Installing the app can take quite a while, since it builds an optimized version of [llama.cpp][] for your CPU.
@@ -115,6 +119,8 @@ If a sentence has been previously recognized, its result will be cached and the 
 ## Web UI
 
 A small web interface is available that shows the generated LLM tools (OpenAI function spec). This is for debugging only.
+
+A benchmark page is available at `/benchmark` (relative to the ingress URL). It runs a fixed fixture of tools and sentences (`benchmark.yaml`) against the loaded model and reports per-sentence latency, throughput (tokens/sec), and correctness (the parsed tool call vs. the expected one). The fixture is independent of your exposed scripts so results are reproducible and comparable across machines and model/config changes. The live model state is snapshotted and restored, so running a benchmark does not disturb the assistant &mdash; but voice handling pauses for its duration.
 
 ## Benchmarks
 

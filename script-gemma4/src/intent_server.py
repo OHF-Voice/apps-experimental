@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
 from wyoming.asr import Transcript
@@ -15,7 +14,6 @@ from const import AppState
 from hass_api import SatelliteInfo
 
 _LOGGER = logging.getLogger(__name__)
-_LLAMA_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
 
 class Gemma4EventHandler(AsyncEventHandler):
@@ -67,7 +65,7 @@ class Gemma4EventHandler(AsyncEventHandler):
 
                 loop = asyncio.get_running_loop()
                 tool_calls, response_text = await loop.run_in_executor(
-                    _LLAMA_EXECUTOR,
+                    self.state.llama_executor,
                     self.state.recognizer.get_tool_calls,
                     transcript.text,
                     language,

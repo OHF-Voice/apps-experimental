@@ -24,4 +24,5 @@ exec .venv/bin/python3 app.py \
     --hf-repo "$(bashio::config 'hf_repo')" \
     --hf-filename "$(bashio::config 'hf_model')" \
     --tool-call-cache-size "$(bashio::config 'tool_call_cache_size')" \
+    --n-threads "$(bashio::config 'n_threads')" \
     ${flags[@]}

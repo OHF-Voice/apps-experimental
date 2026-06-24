@@ -53,6 +53,7 @@ RUN \
     && rm -rf /var/lib/apt/lists/*
 
 COPY src/*.py ./
+COPY src/benchmark.yaml ./
 
 WORKDIR /
 COPY rootfs /

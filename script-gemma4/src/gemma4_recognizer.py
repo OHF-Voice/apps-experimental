@@ -45,6 +45,7 @@ class Gemma4Recognizer:
         cache_size: int = 0,
         n_ctx: Optional[int] = None,
         n_ctx_overhead: int = 128,
+        n_threads: Optional[int] = None,
         max_tokens: int = 64,
         debug: bool = False,
     ) -> None:
@@ -55,6 +56,7 @@ class Gemma4Recognizer:
         self.user_prompt = user_prompt
         self.n_ctx = n_ctx
         self.n_ctx_overhead = n_ctx_overhead
+        self.n_threads = n_threads
         self.max_tokens = max_tokens
         self.temperature = 0.0
         self.top_p = 1.0
@@ -118,6 +120,7 @@ class Gemma4Recognizer:
                 model_path=model_path,
                 chat_template_kwargs={"enable_thinking": self.enable_thinking},
                 n_ctx=n_ctx,
+                n_threads=self.n_threads,
                 verbose=self.debug,
             )
 
@@ -200,6 +203,131 @@ class Gemma4Recognizer:
             self.cache.set(cache_key, model_response)
 
         return model_response
+
+    def describe(self) -> Dict[str, Any]:
+        """Return the effective runtime config (for benchmark reports)."""
+        n_threads: Optional[int] = None
+        n_ctx: Optional[int] = self.n_ctx
+        draft_model: Optional[str] = None
+        if self.llm is not None:
+            n_threads = getattr(self.llm.context_params, "n_threads", None)
+            n_ctx = self.llm.n_ctx()
+            if getattr(self.llm, "draft_model", None) is not None:
+                draft_model = type(self.llm.draft_model).__name__
+
+        return {
+            "repo_id": self.repo_id,
+            "filename": self.filename,
+            "n_ctx": n_ctx,
+            "n_threads": n_threads,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "draft_model": draft_model,
+        }
+
+    def run_sentences(
+        self,
+        tools: List[Dict[str, Any]],
+        sentences: List[Dict[str, Any]],
+        passes: int = 3,
+        default_language: str = "en",
+    ) -> Dict[str, Any]:
+        """Benchmark a fixed tool/sentence fixture without disturbing live state.
+
+        Snapshots the running assistant's state, builds a temporary prefix from
+        ``tools``, runs each sentence ``passes`` times (resetting to the warm
+        prefix before each timed call so every measurement mirrors a fresh
+        per-utterance start in production), then restores the live state. The
+        response cache is bypassed entirely. Must be called on the same single
+        thread that serves recognition (the model is not thread-safe).
+        """
+        assert self.llm, "Not loaded"
+        passes = max(1, passes)
+        sorted_tools = sorted(tools, key=lambda t: t["function"]["name"])
+
+        # Snapshot live state so benchmarking never disturbs the running assistant.
+        prod_state = self.llm.save_state()
+        try:
+            # Build the temporary static prefix for the benchmark tools.
+            start_time = time.monotonic()
+            self.llm.create_chat_completion(
+                messages=[self.system_message],  # type: ignore
+                tools=sorted_tools,  # type: ignore
+                max_tokens=0,
+            )
+            rebuild_seconds = time.monotonic() - start_time
+
+            # Snapshot the warm prefix so each sentence starts from the same point.
+            prefix_state = self.llm.save_state()
+
+            results: List[Dict[str, Any]] = []
+            for sentence in sentences:
+                text = str(sentence["text"]).strip()
+                language = str(sentence.get("language") or default_language)
+                sentence_passes: List[Dict[str, Any]] = []
+                content = ""
+
+                for _ in range(passes):
+                    # Reset to warm prefix (untimed): mirrors a production
+                    # per-utterance start where only the user turn is evaluated.
+                    self.llm.load_state(prefix_state)
+
+                    start_time = time.monotonic()
+                    response = cast(
+                        Dict[str, Any],
+                        self.llm.create_chat_completion(
+                            messages=[
+                                self.system_message,  # type: ignore
+                                {
+                                    "role": "user",
+                                    "content": self.user_prompt.format(
+                                        text=text, language=language
+                                    ),
+                                },
+                            ],
+                            tools=sorted_tools,  # type: ignore
+                            temperature=self.temperature,
+                            top_p=self.top_p,
+                            top_k=self.top_k,
+                            max_tokens=self.max_tokens,
+                            tool_choice=self.tool_choice,  # type: ignore
+                        ),
+                    )
+                    latency = time.monotonic() - start_time
+
+                    content = response["choices"][0]["message"]["content"] or ""
+                    usage = response.get("usage") or {}
+                    sentence_passes.append(
+                        {
+                            "latency": latency,
+                            "prompt_tokens": usage.get("prompt_tokens"),
+                            "completion_tokens": usage.get("completion_tokens"),
+                        }
+                    )
+
+                tool_calls = _parse_tool_calls(content)
+                results.append(
+                    {
+                        "text": text,
+                        "language": language,
+                        "passes": sentence_passes,
+                        "content": content,
+                        "tool_calls": [
+                            {"name": name, "args": args} for name, args in tool_calls
+                        ],
+                    }
+                )
+        finally:
+            # Always restore the live assistant's state.
+            self.llm.load_state(prod_state)
+
+        return {
+            "rebuild_seconds": rebuild_seconds,
+            "passes": passes,
+            "num_tools": len(sorted_tools),
+            "config": self.describe(),
+            "sentences": results,
+        }
 
 
 # -----------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict
@@ -16,3 +17,6 @@ class AppState:
     hass_info: HomeAssistantInfo
     tools: Dict[str, Tool]
     recognizer: "Gemma4Recognizer"
+    # Single worker serializes all access to the (non-thread-safe) model, shared
+    # between live recognition and the benchmark endpoint.
+    llama_executor: ThreadPoolExecutor
