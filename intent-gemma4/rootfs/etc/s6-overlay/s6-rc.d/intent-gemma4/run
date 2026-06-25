@@ -14,10 +14,12 @@ fi
 export HF_HOME=/data/cache
 export HF_TOKEN="$(bashio::config 'hf_token')"
 
+mkdir -p /data/state
+
 tools_file=/data/tools.yaml
 if [ ! -f "${tools_file}" ]; then
   # Default tools
-  cp ./tools.yaml "${tools_file}"
+  cp ./intent-tools.yaml "${tools_file}"
 fi
 
 exec python3 app.py \
@@ -27,5 +29,5 @@ exec python3 app.py \
     --http-host 0.0.0.0 \
     --http-port 5000 \
     --tools "${tools_file}" \
-    --prime-model \
+    --llama-state /data/state/llama_state.bin \
     ${flags[@]}

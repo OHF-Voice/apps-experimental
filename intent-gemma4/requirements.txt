@@ -5,4 +5,5 @@ ruamel.yaml
 flask
 voluptuous
 jinja2
+home-assistant-intents
 wyoming[zeroconf]

@@ -51,7 +51,7 @@ CommandSchema = {
 
 ToolsAndCommandsSchema = vol.Schema(
     {
-        vol.Required("commands"): [CommandSchema],
+        vol.Optional("commands"): [CommandSchema],
         # OpenAI function schema
         vol.Required("tools"): [dict],
     },

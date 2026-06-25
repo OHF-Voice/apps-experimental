@@ -1,0 +1,94 @@
+---
+# Fixed fixture for the latency/correctness benchmark.
+#
+# This is intentionally INDEPENDENT of any particular Home Assistant instance so
+# that runs are reproducible and comparable across machines and model/config
+# changes. Each sentence's `expected` is the list of Home Assistant intents
+# (name + slots) that should result after the model's tool calls are mapped
+# through intent_mapping.tool_to_intent -- i.e. the end-to-end output of this
+# service. An empty `expected` means no intent should be recognized.
+#
+# By default the benchmark measures latency against the model's *actual* loaded
+# tools (so it reflects the real tool prefix). Uncomment `tools` below (same
+# OpenAI function spec the app loads) to measure against an isolated set.
+
+language: en
+
+# tools: [...]  # optional; defaults to the app's live tools
+
+sentences:
+  - text: "nevermind"
+    expected:
+      - name: HassNevermind
+
+  - text: "what time is it"
+    expected:
+      - name: HassGetCurrentTime
+
+  - text: "what is today's date"
+    expected:
+      - name: HassGetCurrentDate
+
+  - text: "set a timer for 5 minutes"
+    expected:
+      - name: HassStartTimer
+        slots:
+          minutes: 5
+
+  - text: "set a timer for 1 hour and 30 seconds"
+    expected:
+      - name: HassStartTimer
+        slots:
+          hours: 1
+          seconds: 30
+
+  - text: "how much time is left on my timer"
+    expected:
+      - name: HassTimerStatus
+
+  - text: "pause the timer"
+    expected:
+      - name: HassPauseTimer
+
+  - text: "resume my timer"
+    expected:
+      - name: HassUnpauseTimer
+
+  - text: "cancel all timers"
+    expected:
+      - name: HassCancelAllTimers
+
+  - text: "add 5 minutes to the timer"
+    expected:
+      - name: HassIncreaseTimer
+        slots:
+          minutes: 5
+
+  - text: "pause the music"
+    expected:
+      - name: HassMediaPause
+
+  - text: "resume the music"
+    expected:
+      - name: HassMediaUnpause
+
+  - text: "next track"
+    expected:
+      - name: HassMediaNext
+
+  - text: "what is the weather"
+    expected:
+      - name: HassGetWeather
+
+  - text: "what is the temperature"
+    expected:
+      - name: HassClimateGetTemperature
+
+  - text: "add milk to my shopping list"
+    expected:
+      - name: HassShoppingListAddItem
+        slots:
+          item: milk
+
+  - text: "the quick brown fox jumps over the lazy dog"
+    expected: []

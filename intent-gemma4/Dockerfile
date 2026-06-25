@@ -17,15 +17,23 @@ RUN \
         netcat-traditional \
         python3 \
         python3-pip \
+        python3-dev \
         build-essential \
+        cmake \
+        ninja-build \
+        libgomp1 \
     && pip3 install --no-cache-dir -U \
         setuptools \
         wheel \
+    # Compile llama-cpp-python from source to maximize CPU optimizations.
+    && CMAKE_ARGS='-DCMAKE_BUILD_TYPE=Release' \
+       pip3 install --no-cache-dir --no-binary llama-cpp-python llama-cpp-python \
     && pip3 install --no-cache-dir -r ./requirements.txt \
     && rm -rf /var/lib/apt/lists/*
 
 COPY src/templates/*.html ./templates/
-COPY src/tools.yaml ./tools.yaml
+COPY src/intent-tools.yaml ./intent-tools.yaml
+COPY src/benchmark.yaml ./benchmark.yaml
 COPY src/*.py ./
 
 WORKDIR /

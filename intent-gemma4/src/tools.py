@@ -34,6 +34,13 @@ def _normalize_gemma_tool_text(text: str) -> str:
 def _parse_value(value: str):
     value = _normalize_gemma_tool_text(value.strip())
 
+    # JSON-ish arrays/objects
+    if value.startswith(("[", "{")) and value.endswith(("]", "}")):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            pass
+
     if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
         try:
             return json.loads(value)
@@ -62,6 +69,7 @@ def _split_args(raw_args: str) -> List[str]:
     buf = []
     in_string = False
     escape = False
+    depth = 0
 
     for ch in raw_args:
         if escape:
@@ -79,12 +87,18 @@ def _split_args(raw_args: str) -> List[str]:
             in_string = not in_string
             continue
 
-        if ch == "," and not in_string:
-            part = "".join(buf).strip()
-            if part:
-                parts.append(part)
-            buf.clear()
-            continue
+        if not in_string:
+            if ch in "[{(":
+                depth += 1
+            elif ch in "]})":
+                depth -= 1
+
+            if ch == "," and depth == 0:
+                part = "".join(buf).strip()
+                if part:
+                    parts.append(part)
+                buf.clear()
+                continue
 
         buf.append(ch)
 
