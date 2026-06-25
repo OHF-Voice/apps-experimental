@@ -88,7 +88,12 @@ class Gemma4EventHandler(AsyncEventHandler):
 
                     # Map names to ids
                     for var_key, var_value in tool_args.items():
-                        name_map = tool.name_map.get(var_key, {})
+                        name_map = tool.name_map.get(var_key)
+                        if name_map is None:
+                            # No mapping
+                            variables[var_key] = var_value
+                            continue
+
                         var_mapped_value = name_map.get(var_value)
                         if var_mapped_value is not None:
                             _LOGGER.debug(
