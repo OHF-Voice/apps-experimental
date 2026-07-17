@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import pickle
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
@@ -18,6 +19,10 @@ TOOL_ARGS = Dict[str, Any]
 TOOL_CALL = Tuple[str, TOOL_ARGS]
 MODEL_RESPONSE = Tuple[List[TOOL_CALL], str]
 
+
+# Hermes-style tool calls (Qwen, Hermes, many fine-tunes):
+# <tool_call>{"name": ..., "arguments": {...}}</tool_call>
+HERMES_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 
 DEFAULT_REPO = "ggml-org/gemma-4-E2B-it-GGUF"
 DEFAULT_FILENAME = "gemma-4-E2B-it-Q8_0.gguf"
@@ -54,6 +59,9 @@ class Gemma4Recognizer:
         n_threads: Optional[int] = None,
         max_tokens: int = 64,
         enable_thinking: bool = False,
+        chat_format: Optional[str] = None,
+        flash_attn: bool = False,
+        prompt_lookup: int = 0,
         debug: bool = False,
     ) -> None:
         self.llm: Optional[Llama] = None
@@ -69,6 +77,15 @@ class Gemma4Recognizer:
         self.top_p = 1.0
         self.top_k = 1
         self.enable_thinking = enable_thinking
+        # Optional llama-cpp-python chat handler. Leave None for Gemma 4 (tool
+        # calls are parsed from message content); set e.g.
+        # "chatml-function-calling" for models that emit structured tool_calls.
+        self.chat_format = chat_format
+        # Latency knobs (no accuracy cost): flash attention, and prompt-lookup
+        # speculative decoding (drafts n-grams from the prompt -- effective when
+        # the output echoes input tokens like names/areas).
+        self.flash_attn = flash_attn
+        self.prompt_lookup = prompt_lookup
         self.tool_choice: str = "auto"
         self.tools: Optional[List[Dict[str, Any]]] = None
         self.debug = debug
@@ -83,7 +100,7 @@ class Gemma4Recognizer:
             "content": system_prompt,
         }
 
-    def load(self, tools: List[Dict[str, Any]]) -> None:
+    def load(self, tools: List[Dict[str, Any]], build_prefix: bool = True) -> None:
         self.tools = sorted(tools, key=lambda t: t["function"]["name"])
         if self.llm is None:
             if self.n_ctx is None:
@@ -122,14 +139,31 @@ class Gemma4Recognizer:
                     filename=self.filename,
                     local_files_only=False,
                 )
+            draft_model = None
+            if self.prompt_lookup > 0:
+                from llama_cpp.llama_speculative import LlamaPromptLookupDecoding
+
+                draft_model = LlamaPromptLookupDecoding(
+                    num_pred_tokens=self.prompt_lookup
+                )
+
             _LOGGER.debug("Loading gemma4: %s (n_ctx=%s)", model_path, n_ctx)
             self.llm = Llama(
                 model_path=model_path,
                 chat_template_kwargs={"enable_thinking": self.enable_thinking},
+                chat_format=self.chat_format,
                 n_ctx=n_ctx,
                 n_threads=self.n_threads,
+                flash_attn=self.flash_attn,
+                draft_model=draft_model,
                 verbose=self.debug,
             )
+
+        if not build_prefix:
+            # Benchmark-only use (e.g. the sweep): skip the persisted prefix and
+            # its build/save. run_sentences() builds its own warm prefix, so this
+            # avoids paying the (slow on a Pi) prefix eval twice.
+            return
 
         actual_tools_hash = _get_tools_hash(
             f"{self.repo_id}/{self.filename}", self.tools, self.system_prompt
@@ -204,8 +238,9 @@ class Gemma4Recognizer:
         end_time = time.monotonic()
         _LOGGER.debug("Response in %s second(s): %s", end_time - start_time, response)
 
-        content = response["choices"][0]["message"]["content"] or ""
-        model_response = (parse_tool_calls(content), content)
+        message = response["choices"][0]["message"]
+        content = message.get("content") or ""
+        model_response = (_extract_tool_calls(message), content)
         if self.cache is not None:
             _LOGGER.debug("Caching '%s' -> %s", cache_key, model_response)
             self.cache.set(cache_key, model_response)
@@ -230,6 +265,9 @@ class Gemma4Recognizer:
             "n_threads": n_threads,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
+            "chat_format": self.chat_format,
+            "flash_attn": self.flash_attn,
+            "prompt_lookup": self.prompt_lookup,
             "draft_model": draft_model,
         }
 
@@ -254,7 +292,21 @@ class Gemma4Recognizer:
         sorted_tools = sorted(tools, key=lambda t: t["function"]["name"])
 
         # Snapshot live state so benchmarking never disturbs the running assistant.
-        prod_state = self.llm.save_state()
+        # Some configs (e.g. prompt-lookup speculative decoding) have state that
+        # llama.cpp can't serialize; fall back to relying on its automatic
+        # longest-common-prefix reuse, which means we can't reset between passes
+        # of the same sentence -- so force a single pass (each distinct sentence
+        # is still a fresh user turn against the warm prefix).
+        can_snapshot = True
+        prod_state = None
+        try:
+            prod_state = self.llm.save_state()
+        except Exception:  # noqa: BLE001
+            can_snapshot = False
+            _LOGGER.warning(
+                "save_state unavailable; benchmarking without per-pass reset"
+            )
+
         try:
             # Build the temporary static prefix for the benchmark tools.
             start_time = time.monotonic()
@@ -266,8 +318,14 @@ class Gemma4Recognizer:
             rebuild_seconds = time.monotonic() - start_time
 
             # Snapshot the warm prefix so each sentence starts from the same point.
-            prefix_state = self.llm.save_state()
+            prefix_state = None
+            if can_snapshot:
+                try:
+                    prefix_state = self.llm.save_state()
+                except Exception:  # noqa: BLE001
+                    can_snapshot = False
 
+            effective_passes = passes if can_snapshot else 1
             results: List[Dict[str, Any]] = []
             for sentence in sentences:
                 text = str(sentence["text"]).strip()
@@ -275,10 +333,11 @@ class Gemma4Recognizer:
                 sentence_passes: List[Dict[str, Any]] = []
                 content = ""
 
-                for _ in range(passes):
+                for _ in range(effective_passes):
                     # Reset to warm prefix (untimed): mirrors a production
                     # per-utterance start where only the user turn is evaluated.
-                    self.llm.load_state(prefix_state)
+                    if can_snapshot:
+                        self.llm.load_state(prefix_state)
 
                     start_time = time.monotonic()
                     response = cast(
@@ -303,7 +362,8 @@ class Gemma4Recognizer:
                     )
                     latency = time.monotonic() - start_time
 
-                    content = response["choices"][0]["message"]["content"] or ""
+                    message = response["choices"][0]["message"]
+                    content = message.get("content") or ""
                     usage = response.get("usage") or {}
                     sentence_passes.append(
                         {
@@ -313,7 +373,7 @@ class Gemma4Recognizer:
                         }
                     )
 
-                tool_calls = parse_tool_calls(content)
+                tool_calls = _extract_tool_calls(message)
                 results.append(
                     {
                         "text": text,
@@ -326,12 +386,16 @@ class Gemma4Recognizer:
                     }
                 )
         finally:
-            # Always restore the live assistant's state.
-            self.llm.load_state(prod_state)
+            # Restore the live assistant's state when we were able to snapshot it.
+            if can_snapshot and prod_state is not None:
+                try:
+                    self.llm.load_state(prod_state)
+                except Exception:  # noqa: BLE001
+                    pass
 
         return {
             "rebuild_seconds": rebuild_seconds,
-            "passes": passes,
+            "passes": effective_passes,
             "num_tools": len(sorted_tools),
             "config": self.describe(),
             "sentences": results,
@@ -339,6 +403,102 @@ class Gemma4Recognizer:
 
 
 # -----------------------------------------------------------------------------
+
+
+# Duration slots where a 0 means "absent" (smaller models, e.g. Qwen, tend to
+# fill every field: minutes:5, hours:0, seconds:0). Safe to drop because no
+# non-timer intent uses these keys.
+_DURATION_ZERO_KEYS = frozenset(
+    {"hours", "minutes", "seconds", "start_hours", "start_minutes", "start_seconds"}
+)
+
+
+def _clean_args(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop hallucinated empty/zero-duration slot values some models emit.
+
+    Removes ``None``/``""`` values (e.g. ``area:""``, ``name:""``) and
+    zero-valued duration slots. Home Assistant treats these as absent, and Gemma
+    doesn't emit them, so this is a no-op for the tuned baseline.
+    """
+    cleaned: Dict[str, Any] = {}
+    for key, value in args.items():
+        if value is None or value == "":
+            continue
+        if key in _DURATION_ZERO_KEYS and value == 0:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
+def _extract_tool_calls(message: Dict[str, Any]) -> List[TOOL_CALL]:
+    """Tool calls from a chat message, model-agnostically.
+
+    Prefers llama.cpp's native structured ``tool_calls``; otherwise parses the
+    content as Hermes-style ``<tool_call>{...}</tool_call>`` (Qwen etc.) or
+    Gemma 4's ``<|tool_call>call:NAME{...}<tool_call|>`` syntax. Argument values
+    are cleaned of hallucinated empties/zeros.
+    """
+    raw_calls = message.get("tool_calls") or []
+    calls: List[TOOL_CALL] = []
+    for raw_call in raw_calls:
+        function = raw_call.get("function") or {}
+        name = function.get("name")
+        if not name:
+            continue
+
+        arguments = function.get("arguments")
+        args: Dict[str, Any] = {}
+        if isinstance(arguments, dict):
+            args = arguments
+        elif isinstance(arguments, str) and arguments.strip():
+            try:
+                args = json.loads(arguments)
+            except json.JSONDecodeError:
+                _LOGGER.debug("Could not parse tool arguments: %s", arguments)
+                args = {}
+        calls.append((name, args))
+
+    if not calls:
+        content = message.get("content") or ""
+        # Hermes-style (Qwen etc.) is prefix-cacheable, unlike the
+        # chatml-function-calling handler; fall back to Gemma's content syntax.
+        calls = _parse_hermes_tool_calls(content) or parse_tool_calls(content)
+
+    return [(name, _clean_args(args)) for name, args in calls]
+
+
+def _loads_tool_object(raw: str) -> Optional[Dict[str, Any]]:
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        # Some models (e.g. Qwen) double-wrap the object: {{ ... }}.
+        if raw.startswith("{{"):
+            try:
+                obj = json.loads(raw[1:-1])
+            except json.JSONDecodeError:
+                return None
+        else:
+            return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _parse_hermes_tool_calls(content: str) -> List[TOOL_CALL]:
+    calls: List[TOOL_CALL] = []
+    for match in HERMES_TOOL_CALL_RE.finditer(content):
+        obj = _loads_tool_object(match.group(1))
+        if obj is None:
+            continue
+        name = obj.get("name")
+        if not name:
+            continue
+        args = obj.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
+        calls.append((name, args if isinstance(args, dict) else {}))
+    return calls
 
 
 def _get_tools_hash(

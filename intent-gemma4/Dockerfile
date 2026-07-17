@@ -32,14 +32,16 @@ RUN \
     && rm -rf /var/lib/apt/lists/*
 
 COPY src/templates/*.html ./templates/
-COPY src/intent-tools.yaml ./intent-tools.yaml
+COPY src/intents.yaml ./intents.yaml
 COPY src/benchmark.yaml ./benchmark.yaml
 COPY src/*.py ./
 
 WORKDIR /
 COPY rootfs /
 
-HEALTHCHECK --start-period=10m \
+# Generous start period: the first boot downloads a multi-GB model and builds
+# the tools prefix (minutes on a Pi 5) before the Wyoming server starts.
+HEALTHCHECK --start-period=30m \
     CMD echo '{ "type": "describe" }' \
         | nc -w 1 localhost 10500 \
         | grep -iq "intent-gemma4" \

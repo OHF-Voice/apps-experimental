@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Commands and Tools</title>
+  <title>Tools</title>
 
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/material-darker.min.css">
@@ -39,10 +39,6 @@
 
     .nav-bar a:hover {
       background: #555;
-    }
-
-    .nav-bar a.active {
-      background: #444;
     }
 
     .nav-bar .title {
@@ -84,11 +80,14 @@
 </head>
 <body>
   <div class="nav-bar">
-    <span class="title">Commands and Tools</span>
+    <span class="title">Tools</span>
+    <a href="{{ url_for('index') }}">Home</a>
+    <a href="{{ url_for('benchmark_page') }}">Benchmark</a>
   </div>
 
   <div class="toolbar">
     <button id="save-btn">Save</button>
+    <button id="refresh-btn">Refresh from HA</button>
     <span id="status">Ready</span>
     <br />
     <span id="message"></span>
@@ -147,7 +146,36 @@
       }
     }
 
+    async function refreshTools() {
+      statusEl.textContent = "Refreshing from Home Assistant...";
+      messageEl.textContent = "";
+      messageEl.style.color = "";
+
+      try {
+        const resp = await fetch("{{ url_for('refresh') }}", { method: "POST" });
+        const result = await resp.json();
+
+        if (resp.ok && result.ok) {
+          statusEl.textContent = "Refreshed";
+          messageEl.textContent =
+            "Rebuilt " + result.num_tools + " tool(s) from " + result.source +
+            ". Reloading...";
+          messageEl.style.color = "green";
+          setTimeout(() => window.location.reload(), 800);
+        } else {
+          statusEl.textContent = "Error";
+          messageEl.textContent = result.error || "Refresh failed";
+          messageEl.style.color = "red";
+        }
+      } catch (err) {
+        statusEl.textContent = "Request failed";
+        messageEl.textContent = String(err);
+        messageEl.style.color = "red";
+      }
+    }
+
     document.getElementById("save-btn").addEventListener("click", saveYaml);
+    document.getElementById("refresh-btn").addEventListener("click", refreshTools);
     editor.refresh();
   </script>
 </body>

@@ -1,0 +1,48 @@
+---
+# Model sweep config for sweep.py. Each entry is benchmarked against the same
+# fixture (benchmark.yaml) and the same generated tool set.
+#
+#   python3 src/sweep.py --passes 3 --n-threads 4   # run on the Pi 5 / mini PC
+#
+# Latency/throughput are only meaningful on the TARGET hardware. Accuracy is
+# comparable anywhere.
+#
+# Fields per config:
+#   label         display name (also the prefix-cache filename)
+#   repo_id       Hugging Face GGUF repo
+#   filename      GGUF file within the repo
+#   chat_format   (optional) llama-cpp-python chat handler. Normally OMIT it:
+#                 the model uses its own GGUF template (prefix-cacheable) and the
+#                 recognizer parses tool calls from the content -- Gemma's
+#                 <|tool_call> syntax and Hermes-style <tool_call>{...}</tool_call>
+#                 (Qwen, Hermes fine-tunes) are both handled. Do NOT use
+#                 "chatml-function-calling": it re-renders tools so the warm
+#                 prefix is bypassed and every utterance reprocesses the whole
+#                 prompt (~20x slower on CPU). Other formats (Llama 3, Granite)
+#                 need their own content parser added to _extract_tool_calls.
+#   n_threads     (optional) override --n-threads for this model
+#   max_tokens    (optional) override --max-tokens (raise for thinking models)
+
+configs:
+  # --- Gemma 4 E2B quantization sweep (the current baseline family) ---
+  - label: gemma4-E2B-Q8_0
+    repo_id: ggml-org/gemma-4-E2B-it-GGUF
+    filename: gemma-4-E2B-it-Q8_0.gguf
+  - label: gemma4-E2B-Q5_K_M
+    repo_id: bartowski/google_gemma-4-E2B-it-GGUF
+    filename: google_gemma-4-E2B-it-Q5_K_M.gguf
+  - label: gemma4-E2B-Q4_K_M
+    repo_id: bartowski/google_gemma-4-E2B-it-GGUF
+    filename: google_gemma-4-E2B-it-Q4_K_M.gguf
+  - label: gemma4-E2B-IQ2_M
+    repo_id: bartowski/google_gemma-4-E2B-it-GGUF
+    filename: google_gemma-4-E2B-it-IQ2_M.gguf
+
+  # --- Qwen family (Hermes-style tool calls, parsed from content; no chat_format) ---
+  # - label: qwen2.5-3B-instruct-Q4_K_M
+  #   repo_id: Qwen/Qwen2.5-3B-Instruct-GGUF
+  #   filename: qwen2.5-3b-instruct-q4_k_m.gguf
+  # - label: qwen3-1.7B-Q4_K_M
+  #   repo_id: Qwen/Qwen3-1.7B-GGUF
+  #   filename: Qwen3-1.7B-Q4_K_M.gguf
+  # --- Llama 3.2 / Granite need their own content parser added first ---

@@ -1,8 +1,8 @@
 ---
-version: 0.0.1-10
+version: 1.0.0
 slug: intent-gemma4
-name: Gemma 4 Agent
-description: Gemma 4 Agent
+name: Gemma 4 Intent Recognizer
+description: Local Home Assistant intent recognition with Gemma 4 tool calling
 url: https://github.com/OHF-Voice/apps-experimental/tree/master/intent-gemma4
 arch:
   - amd64

@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gemma 4 Intent Recognizer</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, sans-serif;
+      background: #f5f5f5;
+      color: #1c1c1c;
+    }
+
+    .nav-bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 12px 16px;
+      background: #333;
+      color: white;
+    }
+
+    .nav-bar a {
+      color: white;
+      text-decoration: none;
+      padding: 8px 12px;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+
+    .nav-bar a:hover { background: #555; }
+
+    .nav-bar .title {
+      font-weight: bold;
+      margin-right: auto;
+    }
+
+    main {
+      max-width: 60rem;
+      margin: 0 auto;
+      padding: 1rem 1.5rem 3rem;
+    }
+
+    h2 { font-size: 1.1rem; margin: 1.75rem 0 0.5rem; }
+    .muted { color: #666; font-size: 0.85rem; }
+
+    .test-box {
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-top: 1rem;
+    }
+
+    .test-controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    #sentence {
+      flex: 1 1 auto;
+      font-size: 1rem;
+      padding: 0.5rem 0.6rem;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+    }
+
+    #language {
+      width: 3.5rem;
+      font-size: 1rem;
+      padding: 0.5rem 0.4rem;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      text-align: center;
+    }
+
+    button {
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+      cursor: pointer;
+      border: 1px solid #888;
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    button[disabled] { opacity: 0.5; cursor: default; }
+
+    #test-result { margin-top: 0.75rem; }
+
+    .intent-card {
+      border: 1px solid #cfe3cf;
+      background: #f4faf4;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      margin-top: 0.5rem;
+    }
+
+    .intent-card .intent-name {
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+
+    .not-recognized {
+      border: 1px solid #e7c9c9;
+      background: #fbf3f3;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      margin-top: 0.5rem;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      background: white;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      border: 1px solid #ccc;
+      padding: 0.35rem 0.5rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th { background: #f3f3f3; }
+
+    .slots-table { width: auto; min-width: 18rem; margin-top: 0.5rem; }
+
+    code {
+      background: #f0f0f0;
+      padding: 0 0.25rem;
+      border-radius: 3px;
+      white-space: pre-wrap;
+    }
+
+    .error { color: #cf222e; }
+  </style>
+</head>
+<body>
+  <div class="nav-bar">
+    <span class="title">Gemma 4 Intent Recognizer</span>
+    <a href="{{ url_for('tools_page') }}">Tools</a>
+    <a href="{{ url_for('benchmark_page') }}">Benchmark</a>
+  </div>
+
+  <main>
+    {% if not model_ready %}
+    <p class="not-recognized" style="margin-top: 1rem;">
+      <b>Model is loading&hellip;</b> First start can take a while (model
+      download + tools prefix build). Recognition and testing are unavailable
+      until it finishes; reload this page to check again.
+    </p>
+    {% endif %}
+    <div class="test-box">
+      <div class="test-controls">
+        <input id="sentence" type="text" placeholder="Type a sentence, e.g. turn on the kitchen lights"
+               autocomplete="off" autofocus>
+        <input id="language" type="text" value="en" title="Language code">
+        <button id="test-btn">Test</button>
+      </div>
+      <div id="test-result"></div>
+    </div>
+
+    <p class="muted">
+      {{ num_tools }} tool(s) loaded, generated from {{ tools_source }}.
+      <button id="refresh-btn" style="font-size: 0.85rem; padding: 0.2rem 0.6rem;">Refresh from HA</button>
+      <span id="refresh-status"></span>
+    </p>
+
+    {% if entities is none %}
+      <p class="muted">No Home Assistant snapshot: entity, area, and floor names
+      are unavailable. Tools use unconstrained (free string) names.</p>
+    {% else %}
+      <h2>Exposed entities ({{ entities | length }})</h2>
+      <table>
+        <thead><tr><th>Name</th><th>Aliases</th><th>Domain</th><th>Area</th></tr></thead>
+        <tbody>
+        {% for entity in entities %}
+          <tr>
+            <td>{{ entity.name }}</td>
+            <td>{{ entity.aliases | join(', ') }}</td>
+            <td><code>{{ entity.domain }}</code></td>
+            <td>{{ entity.area }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+
+      <h2>Areas ({{ areas | length }})</h2>
+      <table>
+        <thead><tr><th>Name</th><th>Aliases</th><th>Floor</th></tr></thead>
+        <tbody>
+        {% for area in areas %}
+          <tr>
+            <td>{{ area.name }}</td>
+            <td>{{ area.aliases | join(', ') }}</td>
+            <td>{{ area.floor }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+
+      <h2>Floors ({{ floors | length }})</h2>
+      {% if floors %}
+      <table>
+        <thead><tr><th>Name</th><th>Aliases</th></tr></thead>
+        <tbody>
+        {% for floor in floors %}
+          <tr>
+            <td>{{ floor.name }}</td>
+            <td>{{ floor.aliases | join(', ') }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="muted">No floors defined.</p>
+      {% endif %}
+    {% endif %}
+  </main>
+
+  <script>
+    const sentenceEl = document.getElementById("sentence");
+    const languageEl = document.getElementById("language");
+    const testBtn = document.getElementById("test-btn");
+    const resultEl = document.getElementById("test-result");
+
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g,
+        c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+    }
+
+    function renderIntents(data) {
+      let html = "";
+      if (!data.intents.length) {
+        html += "<div class='not-recognized'><b>Not recognized</b> &mdash; no tool call." +
+          (data.content ? "<br>Model said: <code>" + esc(data.content) + "</code>" : "") +
+          "</div>";
+      }
+      for (const intent of data.intents) {
+        const slots = Object.entries(intent.slots || {});
+        html += "<div class='intent-card'>" +
+          "<div class='intent-name'>" + esc(intent.name) + "</div>" +
+          (intent.description ? "<div class='muted'>" + esc(intent.description) + "</div>" : "");
+        if (slots.length) {
+          html += "<table class='slots-table'><thead><tr><th>Slot</th><th>Value</th></tr></thead><tbody>" +
+            slots.map(([k, v]) =>
+              "<tr><td>" + esc(k) + "</td><td><code>" + esc(JSON.stringify(v)) + "</code></td></tr>"
+            ).join("") + "</tbody></table>";
+        } else {
+          html += "<div class='muted'>No slots.</div>";
+        }
+        html += "<div class='muted'>Tool call: <code>" + esc(intent.tool) + " " +
+          esc(JSON.stringify(intent.tool_args || {})) + "</code></div></div>";
+      }
+      html += "<div class='muted'>" + data.latency_ms.toFixed(0) + " ms</div>";
+      resultEl.innerHTML = html;
+    }
+
+    async function runTest() {
+      const text = sentenceEl.value.trim();
+      if (!text) return;
+      testBtn.disabled = true;
+      resultEl.innerHTML = "<span class='muted'>Recognizing&hellip;</span>";
+      try {
+        const resp = await fetch("{{ url_for('test') }}", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({text, language: languageEl.value.trim() || "en"})
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
+        renderIntents(data);
+      } catch (err) {
+        resultEl.innerHTML = "<span class='error'>" + esc(err.message) + "</span>";
+      } finally {
+        testBtn.disabled = false;
+        sentenceEl.focus();
+      }
+    }
+
+    testBtn.addEventListener("click", runTest);
+    sentenceEl.addEventListener("keydown", e => { if (e.key === "Enter") runTest(); });
+
+    const refreshBtn = document.getElementById("refresh-btn");
+    const refreshStatus = document.getElementById("refresh-status");
+    refreshBtn.addEventListener("click", async () => {
+      refreshBtn.disabled = true;
+      refreshStatus.textContent = "Refreshing (rebuilds the model prefix)…";
+      try {
+        const resp = await fetch("{{ url_for('refresh') }}", {method: "POST"});
+        const result = await resp.json();
+        if (!resp.ok || !result.ok) throw new Error(result.error || "Refresh failed");
+        refreshStatus.textContent = "Rebuilt " + result.num_tools +
+          " tool(s) from " + result.source + ". Reloading…";
+        setTimeout(() => window.location.reload(), 800);
+      } catch (err) {
+        refreshStatus.textContent = "Error: " + err.message;
+        refreshBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

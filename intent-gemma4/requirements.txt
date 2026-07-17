@@ -1,9 +1,12 @@
-aiohttp
-llama-cpp-python
-huggingface-hub
-ruamel.yaml
-flask
-voluptuous
-jinja2
-home-assistant-intents
-wyoming[zeroconf]
+# llama-cpp-python is pinned exactly: it is compiled from source in the image
+# and the recognizer depends on its tool-call/chat-handler behavior.
+llama-cpp-python==0.3.32
+aiohttp>=3.12,<4
+huggingface-hub>=1,<2
+ruamel.yaml>=0.19,<1
+flask>=3.1,<4
+voluptuous>=0.15,<1
+jinja2>=3.1,<4
+home-assistant-intents>=2026.5.5
+hassil>=3.10,<4
+wyoming[zeroconf]>=1.8,<2

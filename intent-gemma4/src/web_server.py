@@ -1,6 +1,9 @@
+import asyncio
+import io
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Optional, Union
 
@@ -12,8 +15,9 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 import benchmark
 from benchmark import Fixture
-from commands import ToolsAndCommandsSchema
 from const import BASE_DIR, AppState
+from intent_mapping import tool_to_intent
+from intent_tools import build_tools, unknown_tool_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,12 +25,14 @@ MAX_PASSES = 10
 
 _yaml = YAML()
 
+# OpenAI-style function tools; names are validated against the intent mapping.
+ToolsSchema = vol.Schema({vol.Required("tools"): [dict]})
+
 
 def make_web_server(
     state: AppState, benchmark_fixture_path: Union[str, Path]
 ) -> Flask:
     flask_app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
-    flask_app.secret_key = "90a238ad-7e69-4438-85dc-eee0a68c7435"
 
     flask_app.wsgi_app = ProxyFix(flask_app.wsgi_app, x_proto=1, x_host=1)  # type: ignore[method-assign]
     flask_app.wsgi_app = IngressPrefixMiddleware(flask_app.wsgi_app)  # type: ignore[method-assign]
@@ -45,12 +51,133 @@ def make_web_server(
 
     @flask_app.route("/", methods=["GET"])
     def index():
-        if state.tools_path:
+        """Home page: sentence tester + the Home Assistant names in the tools."""
+        home = state.home_info
+        entities = areas = floors = None
+        if home is not None:
+
+            def area_name(area_id: Optional[str]) -> str:
+                area = home.areas.get(area_id) if area_id else None
+                return area.name if area else ""
+
+            def floor_name(floor_id: Optional[str]) -> str:
+                floor = home.floors.get(floor_id) if floor_id else None
+                return floor.name if floor else ""
+
+            entities = sorted(
+                (
+                    {
+                        "name": e.name,
+                        "aliases": e.aliases or [],
+                        "domain": e.domain,
+                        "area": area_name(e.area_id),
+                    }
+                    for e in home.entities.values()
+                ),
+                key=lambda e: (e["domain"], e["name"].lower()),
+            )
+            areas = sorted(
+                (
+                    {
+                        "name": a.name,
+                        "aliases": a.aliases or [],
+                        "floor": floor_name(a.floor_id),
+                    }
+                    for a in home.areas.values()
+                ),
+                key=lambda a: a["name"].lower(),
+            )
+            floors = sorted(
+                (
+                    {"name": f.name, "aliases": f.aliases or []}
+                    for f in home.floors.values()
+                ),
+                key=lambda f: f["name"].lower(),
+            )
+
+        if state.tools_path and state.tools_path.exists():
+            tools_source = "manual override file"
+        elif home is not None:
+            tools_source = "intent metadata + Home Assistant"
+        else:
+            tools_source = "intent metadata (no Home Assistant)"
+
+        return render_template(
+            "home.html",
+            entities=entities,
+            areas=areas,
+            floors=floors,
+            num_tools=len(state.tools),
+            tools_source=tools_source,
+            model_ready=state.recognizer.llm is not None,
+        )
+
+    @flask_app.route("/test", methods=["POST"])
+    def test():
+        """Recognize one sentence and report the mapped intent(s)."""
+        body = request.get_json(silent=True) or {}
+        text = str(body.get("text") or "").strip()
+        if not text:
+            return jsonify({"ok": False, "error": "No text given"}), 400
+        language = str(body.get("language") or "").strip() or "en"
+
+        if state.recognizer.llm is None:
+            return (
+                jsonify({"ok": False, "error": "Model is still loading"}),
+                503,
+            )
+
+        # Serialize on the single model worker (shared with live recognition).
+        start_time = time.monotonic()
+        future = state.llama_executor.submit(
+            state.recognizer.get_tool_calls, text, language
+        )
+        tool_calls, content = future.result()
+        latency_ms = (time.monotonic() - start_time) * 1000.0
+
+        intents = []
+        for tool_name, tool_args in tool_calls:
+            intent_name, slots = tool_to_intent(tool_name, tool_args)
+            info = state.metadata.get(intent_name) or {}
+            intents.append(
+                {
+                    "name": intent_name,
+                    "description": info.get("description", ""),
+                    "slots": slots,
+                    "tool": tool_name,
+                    "tool_args": tool_args,
+                }
+            )
+
+        return jsonify(
+            {
+                "ok": True,
+                "text": text,
+                "language": language,
+                "intents": intents,
+                "content": content,
+                "latency_ms": latency_ms,
+            }
+        )
+
+    @flask_app.route("/tools", methods=["GET"])
+    def tools_page():
+        """YAML view/editor for the loaded tool set."""
+        if state.tools_path and state.tools_path.exists():
             content = state.tools_path.read_text(encoding="utf-8")
         else:
-            content = "# No tools path was set. Tools will not be saved!\n"
+            # Show the auto-generated tools. Saving writes an override file.
+            buffer = io.StringIO()
+            _yaml.dump({"tools": state.tools}, buffer)
+            header = (
+                "# Auto-generated from the intent metadata + Home Assistant state.\n"
+                "# Edit and Save to override (takes effect now; persists on restart).\n"
+                if state.tools_path
+                else "# Auto-generated. No --tools path set, so edits cannot be saved.\n"
+            )
+            content = header + buffer.getvalue()
 
-        return render_template("index.html", content=content)
+        return render_template("tools.html", content=content)
 
     @flask_app.route("/save", methods=["POST"])
     def save():
@@ -65,11 +192,24 @@ def make_web_server(
             return jsonify({"ok": False, "error": f"YAML parse error: {err}"}), 400
 
         try:
-            data = ToolsAndCommandsSchema(data)
+            data = ToolsSchema(data)
         except vol.Invalid as err:
             err_text = humanize_error(data, err)
             _LOGGER.error("Invalid tools: %s", err_text)
             return jsonify({"ok": False, "error": err_text}), 400
+
+        unknown = unknown_tool_names(data["tools"], state.metadata)
+        if unknown:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "error": "Tool name(s) do not map to any intent: "
+                        + ", ".join(unknown),
+                    }
+                ),
+                400,
+            )
 
         state.tools_path.write_text(text, encoding="utf-8")
         _LOGGER.debug("Wrote: %s", state.tools_path)
@@ -81,6 +221,36 @@ def make_web_server(
         state.llama_executor.submit(state.recognizer.load, state.tools).result()
 
         return jsonify({"ok": True, "message": "Saved successfully."})
+
+    @flask_app.route("/refresh", methods=["POST"])
+    def refresh():
+        """Re-read Home Assistant state and rebuild the tool set + prefix."""
+        try:
+            tools_loaded = False
+            source = "file"
+            if state.tools_path and state.tools_path.exists():
+                # Manual override mode: reload the file (invalid/stale files
+                # are rejected and fall through to auto-generation).
+                tools_loaded = state.load()
+            if not tools_loaded:
+                home_info = None
+                if state.hass is not None and state.loop is not None:
+                    future = asyncio.run_coroutine_threadsafe(
+                        state.hass.get_home_info(), state.loop
+                    )
+                    home_info = future.result(timeout=30)
+                state.home_info = home_info
+                state.tools = build_tools(state.metadata, home_info)
+                source = "home-assistant" if home_info is not None else "metadata"
+
+            # Rebuild the cached prefix on the model worker (model not
+            # thread-safe). Blocks live recognition until ready.
+            state.llama_executor.submit(state.recognizer.load, state.tools).result()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.exception("Refresh failed")
+            return {"ok": False, "error": str(err)}, 500
+
+        return {"ok": True, "source": source, "num_tools": len(state.tools)}
 
     @flask_app.route("/health")
     def health():
@@ -94,6 +264,8 @@ def make_web_server(
     def benchmark_run():
         if fixture is None:
             return {"error": fixture_error or "No benchmark fixture"}, 500
+        if state.recognizer.llm is None:
+            return {"error": "Model is still loading"}, 503
 
         body = request.get_json(silent=True) or {}
         try:
@@ -256,7 +428,9 @@ function render(data) {
       "<tr>" +
       "<td>" + esc(r.text) + "</td>" +
       "<td class='" + (r.passed ? "pass" : "fail") + "'>" +
-        (r.passed ? "PASS" : "FAIL") + "</td>" +
+        (r.passed ? "PASS" : "FAIL") +
+        (r.match === "intent" ? "<br><span class='muted'>intent only</span>" : "") +
+        "</td>" +
       "<td>" + intents(r.expected) + "</td>" +
       "<td>" + intents(r.got) + "</td>" +
       "<td>" + calls(r.tool_calls) + "</td>" +

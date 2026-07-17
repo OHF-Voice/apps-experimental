@@ -1,0 +1,4 @@
+# Local dev script (contains a Home Assistant token) and local model/state files.
+run.sh
+local/
+.ipynb_checkpoints/

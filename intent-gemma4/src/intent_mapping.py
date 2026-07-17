@@ -1,106 +1,43 @@
 """Maps recognized tool calls to Home Assistant intents.
 
-The model is prompted with generic, easy-to-call tools (e.g. ``start_timer``,
-``control_media``). This module translates each tool call into the
-corresponding Home Assistant intent name + slots that get emitted as a Wyoming
-``Intent`` event. Tools whose names are already Home Assistant intents (e.g.
-``HassGetWeather``) pass through unchanged.
+Tools are auto-generated from the intent metadata (``intent_tools``). Each tool
+name is either a short, generation-friendly alias for one Home Assistant intent
+(``TOOL_NAMES``) or one of the split sub-tools (``TOOL_OVERRIDES``) that fold
+back into a single intent (open/close -> HassTurnOn/HassTurnOff, ...). Slots
+pass through unchanged. Tool names that are already intent names -- e.g. from a
+manual ``--tools`` override file -- pass through as-is.
 """
 
 from typing import Any, Dict, Tuple
 
+from intent_tools import MEDIA_INTENTS, TOOL_TO_INTENT
 
-def _duration_slots(
-    total_seconds: int,
-    hours_key: str = "hours",
-    minutes_key: str = "minutes",
-    seconds_key: str = "seconds",
-) -> Dict[str, Any]:
-    slots: Dict[str, Any] = {}
-    hours = total_seconds // 3600
-    if hours > 0:
-        slots[hours_key] = hours
-    minutes = (total_seconds % 3600) // 60
-    if minutes > 0:
-        slots[minutes_key] = minutes
-    seconds = total_seconds % 60
-    if seconds > 0:
-        slots[seconds_key] = seconds
-
-    return slots
+# The model occasionally fills a media tool's `name` with a generic noun from
+# the utterance ("pause the music" -> name="music"). Under live HA the name
+# enum anchors it to real players; scrub the known generics so the no-enum
+# case degrades to "whatever is currently playing" instead of a failed entity
+# match in Home Assistant.
+_GENERIC_MEDIA_NAMES = {"music", "the music", "media", "song", "the song", "audio"}
 
 
 def tool_to_intent(
     tool_name: str, tool_args: Dict[str, Any]
 ) -> Tuple[str, Dict[str, Any]]:
-    if tool_name == "start_timer":
-        total_seconds = tool_args.get("total_seconds", 0)
-        timer_args = _duration_slots(total_seconds)
+    intent_name = TOOL_TO_INTENT.get(tool_name, tool_name)
 
-        timer_name = tool_args.get("name")
-        if timer_name:
-            timer_args["name"] = timer_name
+    if intent_name in MEDIA_INTENTS:
+        name = tool_args.get("name")
+        if isinstance(name, str) and name.strip().lower() in _GENERIC_MEDIA_NAMES:
+            tool_args = {k: v for k, v in tool_args.items() if k != "name"}
 
-        return ("HassStartTimer", timer_args)
+    # The invented increase_/decrease_volume aliases carry their direction in
+    # the tool name; fold it into volume_step's sign.
+    if tool_name in ("increase_volume", "decrease_volume"):
+        step = str(tool_args.get("volume_step") or "").lstrip("+-")
+        if not step.isdigit():
+            step = "up" if tool_name == "increase_volume" else "down"
+        elif tool_name == "decrease_volume":
+            step = f"-{step}"
+        tool_args = {**tool_args, "volume_step": step}
 
-    if tool_name == "control_timer":
-        timer_action = tool_args.get("action")
-        if timer_action == "cancel_all":
-            return ("HassCancelAllTimers", {})
-
-        timer_args: Dict[str, Any] = {}
-        total_seconds = tool_args.get("total_seconds")
-        if total_seconds is not None:
-            timer_args = _duration_slots(
-                total_seconds,
-                hours_key="start_hours",
-                minutes_key="start_minutes",
-                seconds_key="start_seconds",
-            )
-
-        timer_name = tool_args.get("name")
-        if timer_name:
-            timer_args["name"] = timer_name
-
-        if timer_action == "pause":
-            return ("HassPauseTimer", timer_args)
-
-        if timer_action == "resume":
-            return ("HassUnpauseTimer", timer_args)
-
-        if timer_action == "cancel":
-            return ("HassCancelTimer", timer_args)
-
-        raise ValueError(f"Unexpected action for control_timer: {timer_action}")
-
-    if tool_name == "update_timer":
-        timer_action = tool_args.get("action")
-        total_update_seconds = tool_args.get("total_update_seconds", 0)
-        timer_args = _duration_slots(total_update_seconds)
-
-        timer_name = tool_args.get("name")
-        if timer_name:
-            timer_args["name"] = timer_name
-
-        if timer_action == "add":
-            return ("HassIncreaseTimer", timer_args)
-
-        if timer_action == "remove":
-            return ("HassDecreaseTimer", timer_args)
-
-        raise ValueError(f"Unexpected action for update_timer: {timer_action}")
-
-    if tool_name == "control_media":
-        media_action = tool_args.get("action")
-        if media_action == "pause":
-            return ("HassMediaPause", {})
-
-        if media_action == "resume":
-            return ("HassMediaUnpause", {})
-
-        if media_action == "next":
-            return ("HassMediaNext", {})
-
-        raise ValueError(f"Unexpected action for control_media: {media_action}")
-
-    return (tool_name, tool_args)
+    return (intent_name, tool_args)

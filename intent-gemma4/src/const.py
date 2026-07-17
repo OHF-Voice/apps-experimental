@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -8,13 +9,15 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from home_assistant_intents import get_intents
 from ruamel.yaml import YAML
 
-from commands import Command
+from intent_tools import unknown_tool_names
 
 if TYPE_CHECKING:
     from gemma4_recognizer import Gemma4Recognizer
-    from hass_api import HomeAssistant
+    from hass_api import HomeAssistant, HomeInfo
 
 BASE_DIR = Path(__file__).resolve().parent
+
+__version__ = "1.0.0"
 
 _LOGGER = logging.getLogger(__name__)
 _yaml = YAML()
@@ -24,38 +27,51 @@ _yaml = YAML()
 class AppState:
     tools_path: Optional[Path]
     tools: List[Dict[str, Any]]
-    commands: Dict[str, Command]
     recognizer: "Gemma4Recognizer"
     # Single worker serializes all access to the (non-thread-safe) model, shared
     # between live recognition and the benchmark endpoint.
     llama_executor: ThreadPoolExecutor
     hass: Optional["HomeAssistant"] = None
+    # Intent metadata used to (re)generate tools, and the main asyncio loop the
+    # web thread schedules HA fetches on. Set when tools are auto-generated.
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    # Last Home Assistant snapshot the tools were built from (None when no HA
+    # or in manual override mode). Shown in the web UI.
+    home_info: Optional["HomeInfo"] = None
+    loop: Optional[asyncio.AbstractEventLoop] = None
     lang_intents: Dict[str, Any] = field(default_factory=dict)
 
-    def load(self) -> None:
-        """Load tool definitions (and legacy commands) from YAML."""
+    def load(self) -> bool:
+        """Load tool definitions from the manual override YAML.
+
+        Returns False (leaving ``tools`` empty, so the caller falls back to
+        auto-generation) when the file is missing, or when it contains tool
+        names that no longer map to intents -- e.g. a file saved by an older
+        version of this app with a different tool scheme.
+        """
         self.tools = []
-        self.commands = {}
         if (self.tools_path is None) or (not self.tools_path.exists()):
             _LOGGER.debug("Missing tools file: %s", self.tools_path)
-            return
+            return False
 
         _LOGGER.debug("Loading tools from YAML: %s", self.tools_path)
         with open(self.tools_path, "r", encoding="utf-8") as tools_file:
-            tools_and_commands = _yaml.load(tools_file)
+            data = _yaml.load(tools_file) or {}
 
-        self.tools = tools_and_commands.get("tools", [])
-        commands_list = tools_and_commands.get("commands")
-        if commands_list:
-            for command_dict in commands_list:
-                command = Command.from_dict(command_dict)
-                self.commands[command.id] = command
+        tools = data.get("tools") or []
+        unknown = unknown_tool_names(tools, self.metadata)
+        if unknown:
+            _LOGGER.warning(
+                "Ignoring tools override %s: unmappable tool name(s) %s "
+                "(saved by an older version?); using auto-generated tools",
+                self.tools_path,
+                unknown,
+            )
+            return False
 
-        if self.tools:
-            _LOGGER.debug("Loaded %s tool(s)", len(self.tools))
-
-        if self.commands:
-            _LOGGER.debug("Loaded %s command(s)", len(self.commands))
+        self.tools = tools
+        _LOGGER.debug("Loaded %s tool(s)", len(self.tools))
+        return bool(self.tools)
 
     def get_lang_intents(self, language: str) -> Dict[str, Any]:
         if language not in self.lang_intents:

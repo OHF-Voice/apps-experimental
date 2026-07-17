@@ -16,18 +16,15 @@ export HF_TOKEN="$(bashio::config 'hf_token')"
 
 mkdir -p /data/state
 
-tools_file=/data/tools.yaml
-if [ ! -f "${tools_file}" ]; then
-  # Default tools
-  cp ./intent-tools.yaml "${tools_file}"
-fi
-
+# Tools are auto-generated from the intent metadata + Home Assistant state.
+# If /data/tools.yaml exists (e.g. saved via the web UI), it is used as a manual
+# override instead.
 exec python3 app.py \
     --uri 'tcp://0.0.0.0:10500' \
     --hass-token "${SUPERVISOR_TOKEN}" \
     --hass-api 'http://supervisor/core/api' \
     --http-host 0.0.0.0 \
     --http-port 5000 \
-    --tools "${tools_file}" \
+    --tools /data/tools.yaml \
     --llama-state /data/state/llama_state.bin \
     ${flags[@]}

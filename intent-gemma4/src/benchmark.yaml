@@ -1,94 +1,171 @@
 ---
 # Fixed fixture for the latency/correctness benchmark.
 #
-# This is intentionally INDEPENDENT of any particular Home Assistant instance so
-# that runs are reproducible and comparable across machines and model/config
-# changes. Each sentence's `expected` is the list of Home Assistant intents
-# (name + slots) that should result after the model's tool calls are mapped
-# through intent_mapping.tool_to_intent -- i.e. the end-to-end output of this
-# service. An empty `expected` means no intent should be recognized.
+# Independent of any particular Home Assistant instance so runs are reproducible
+# and comparable across machines and model/config changes. Each sentence's
+# `expected` is the list of Home Assistant intents (name + slots) that should
+# result after the model's tool calls are mapped through
+# intent_mapping.tool_to_intent (identity for the auto-generated passthrough
+# tools). An empty `expected` means no intent should be recognized.
 #
-# By default the benchmark measures latency against the model's *actual* loaded
-# tools (so it reflects the real tool prefix). Uncomment `tools` below (same
-# OpenAI function spec the app loads) to measure against an isolated set.
+# `match` controls scoring:
+#   exact  (default) - intent name AND slots must match
+#   intent           - only the intent name must match (use when name/area/etc.
+#                      extraction is model-dependent and not the thing under test)
+#
+# By default latency is measured against the model's *actual* loaded tools, so
+# with a filtered tool set some sentences may become unrecognizable (expected).
 
 language: en
 
-# tools: [...]  # optional; defaults to the app's live tools
-
 sentences:
+  # --- no-slot / cancel ---
   - text: "nevermind"
     expected:
       - name: HassNevermind
-
   - text: "what time is it"
     expected:
       - name: HassGetCurrentTime
-
   - text: "what is today's date"
     expected:
       - name: HassGetCurrentDate
+  - text: "the quick brown fox jumps over the lazy dog"
+    expected: []
 
+  # --- on/off (intent only: name vs area+domain extraction varies) ---
+  - text: "turn on the kitchen lights"
+    match: intent
+    expected:
+      - name: HassTurnOn
+  - text: "turn off the living room lights"
+    match: intent
+    expected:
+      - name: HassTurnOff
+  - text: "open the garage door"
+    match: intent
+    expected:
+      - name: HassTurnOn
+  - text: "close the blinds"
+    match: intent
+    expected:
+      - name: HassTurnOff
+  - text: "lock the front door"
+    match: intent
+    expected:
+      - name: HassTurnOn
+  - text: "unlock the front door"
+    match: intent
+    expected:
+      - name: HassTurnOff
+
+  # --- light set ---
+  - text: "set the bedroom lights to red"
+    match: intent
+    expected:
+      - name: HassLightSet
+  - text: "dim the office lights to 30 percent"
+    match: intent
+    expected:
+      - name: HassLightSet
+
+  # --- climate ---
+  - text: "set the thermostat to 70 degrees"
+    match: intent
+    expected:
+      - name: HassClimateSetTemperature
+  - text: "what is the temperature"
+    expected:
+      - name: HassClimateGetTemperature
+
+  # --- state queries ---
+  - text: "is the front door locked"
+    match: intent
+    expected:
+      - name: HassGetState
+
+  # --- covers / position ---
+  - text: "set the curtains to fifty percent"
+    match: intent
+    expected:
+      - name: HassSetPosition
+
+  # --- media ---
+  - text: "pause the music"
+    expected:
+      - name: HassMediaPause
+  - text: "resume the music"
+    expected:
+      - name: HassMediaUnpause
+  - text: "next track"
+    expected:
+      - name: HassMediaNext
+  - text: "previous track"
+    expected:
+      - name: HassMediaPrevious
+  - text: "mute the tv"
+    match: intent
+    expected:
+      - name: HassMediaPlayerMute
+  - text: "turn the volume up"
+    match: intent
+    expected:
+      - name: HassSetVolumeRelative
+  - text: "set the volume to 40 percent"
+    match: intent
+    expected:
+      - name: HassSetVolume
+  - text: "play some pink floyd"
+    match: intent
+    expected:
+      - name: HassMediaSearchAndPlay
+
+  # --- vacuum (intent excluded in v1: expect no tool call, not a misfire) ---
+  - text: "start the vacuum"
+    match: intent
+    expected: []
+
+  # --- fan ---
+  - text: "set the fan to 50 percent"
+    match: intent
+    expected:
+      - name: HassFanSetSpeed
+
+  # --- timers (exact: duration extraction is the thing under test) ---
   - text: "set a timer for 5 minutes"
     expected:
       - name: HassStartTimer
         slots:
           minutes: 5
-
   - text: "set a timer for 1 hour and 30 seconds"
     expected:
       - name: HassStartTimer
         slots:
           hours: 1
           seconds: 30
-
   - text: "how much time is left on my timer"
     expected:
       - name: HassTimerStatus
-
   - text: "pause the timer"
     expected:
       - name: HassPauseTimer
-
   - text: "resume my timer"
     expected:
       - name: HassUnpauseTimer
-
-  - text: "cancel all timers"
+  - text: "cancel the timer"
     expected:
-      - name: HassCancelAllTimers
+      - name: HassCancelTimer
 
-  - text: "add 5 minutes to the timer"
-    expected:
-      - name: HassIncreaseTimer
-        slots:
-          minutes: 5
-
-  - text: "pause the music"
-    expected:
-      - name: HassMediaPause
-
-  - text: "resume the music"
-    expected:
-      - name: HassMediaUnpause
-
-  - text: "next track"
-    expected:
-      - name: HassMediaNext
-
+  # --- weather ---
   - text: "what is the weather"
     expected:
       - name: HassGetWeather
 
-  - text: "what is the temperature"
+  # --- lists (todo; "shopping list" routes to the todo intent) ---
+  - text: "add eggs to my chores list"
+    match: intent
     expected:
-      - name: HassClimateGetTemperature
-
+      - name: HassListAddItem
   - text: "add milk to my shopping list"
+    match: intent
     expected:
-      - name: HassShoppingListAddItem
-        slots:
-          item: milk
-
-  - text: "the quick brown fox jumps over the lazy dog"
-    expected: []
+      - name: HassListAddItem

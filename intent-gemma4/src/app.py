@@ -19,6 +19,7 @@ from gemma4_recognizer import (
 )
 from hass_api import HomeAssistant
 from intent_server import IntentEventHandler
+from intent_tools import build_tools, load_metadata
 from web_server import make_web_server, run_web_server
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,7 +39,17 @@ async def main() -> None:
     parser.add_argument("--hass-token")
     parser.add_argument("--hass-api", default="http://homeassistant.local:8123")
     #
-    parser.add_argument("--tools", help="Path to read/write YAML with tool definitions")
+    parser.add_argument(
+        "--tools",
+        help="Optional YAML file of tool definitions. If it exists, it is used "
+        "as-is (manual override); otherwise tools are auto-generated from "
+        "--intents + Home Assistant state.",
+    )
+    parser.add_argument(
+        "--intents",
+        default=str(BASE_DIR / "intents.yaml"),
+        help="Path to the OHF intent metadata used to generate tools",
+    )
     #
     parser.add_argument("--repo-id", default=DEFAULT_REPO)
     parser.add_argument("--filename", default=DEFAULT_FILENAME)
@@ -60,9 +71,7 @@ async def main() -> None:
         "--n-threads",
         type=int,
         default=0,
-        help="CPU threads for the model (0 = llama.cpp default). Throughput is "
-        "memory-bandwidth bound, so leave headroom for Home Assistant on the "
-        "same box rather than using every core.",
+        help="CPU threads for the model (0 = llama.cpp default)",
     )
     parser.add_argument(
         "--max-tokens",
@@ -77,6 +86,27 @@ async def main() -> None:
         help="Number of sentences to remember for tool calls (0 = disabled)",
     )
     parser.add_argument("--enable-thinking", action="store_true")
+    parser.add_argument(
+        "--flash-attn",
+        action="store_true",
+        help="Enable flash attention (faster decode + smaller KV cache)",
+    )
+    parser.add_argument(
+        "--prompt-lookup",
+        type=int,
+        default=0,
+        help="Prompt-lookup speculative decoding draft length (0 = off). NOTE: "
+        "currently crashes in llama-cpp-python with large-vocab models like "
+        "Gemma (scores buffer not allocated for the draft's multi-token eval); "
+        "left here for future llama.cpp versions. Leave at 0.",
+    )
+    parser.add_argument(
+        "--chat-format",
+        default=None,
+        help="llama-cpp-python chat handler (default: auto). Leave unset for "
+        "Gemma 4; set e.g. 'chatml-function-calling' for models that emit "
+        "structured tool calls.",
+    )
     parser.add_argument(
         "--benchmark-fixture",
         default=None,
@@ -106,6 +136,9 @@ async def main() -> None:
         n_threads=args.n_threads if args.n_threads > 0 else None,
         max_tokens=args.max_tokens,
         enable_thinking=args.enable_thinking,
+        chat_format=args.chat_format,
+        flash_attn=args.flash_attn,
+        prompt_lookup=args.prompt_lookup,
         debug=args.debug,
     )
 
@@ -115,22 +148,47 @@ async def main() -> None:
     state = AppState(
         tools_path=Path(args.tools) if args.tools else None,
         tools=[],
-        commands={},
         recognizer=recognizer,
         llama_executor=llama_executor,
         hass=hass,
     )
-    state.load()
 
-    # Build/restore the cached tools prefix on the model worker thread so all
-    # model access stays on a single thread.
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(llama_executor, recognizer.load, state.tools)
+    state.loop = loop
+    state.metadata = load_metadata(args.intents)
 
+    # Determine the tool set: a valid manual override file wins; otherwise
+    # auto-generate from the intent metadata, filtered and enum-injected by the
+    # live Home Assistant state when available. (An override whose tool names
+    # no longer map -- e.g. saved by an older version -- is ignored.)
+    tools_loaded = False
+    if state.tools_path and state.tools_path.exists():
+        _LOGGER.info("Loading tools from file: %s", state.tools_path)
+        tools_loaded = state.load()
+    if not tools_loaded:
+        home_info = None
+        if hass is not None:
+            _LOGGER.info("Fetching Home Assistant state to build tools")
+            try:
+                home_info = await hass.get_home_info()
+            except Exception:
+                _LOGGER.exception(
+                    "Failed to fetch HA state; generating unfiltered tools"
+                )
+        state.home_info = home_info
+        state.tools = build_tools(state.metadata, home_info)
+
+    # Start the web UI before the model loads: the first boot can spend many
+    # minutes downloading the model and building the tools prefix, and the UI
+    # shows a "model loading" state until it is ready.
     benchmark_fixture_path = args.benchmark_fixture or (BASE_DIR / "benchmark.yaml")
     flask_app = make_web_server(state, benchmark_fixture_path)
     flask_thread = run_web_server(flask_app, host=args.http_host, port=args.http_port)
     flask_thread.start()
+
+    # Build/restore the cached tools prefix on the model worker thread so all
+    # model access stays on a single thread.
+    await loop.run_in_executor(llama_executor, recognizer.load, state.tools)
 
     server = AsyncServer.from_uri(args.uri)
     _LOGGER.info("Ready")

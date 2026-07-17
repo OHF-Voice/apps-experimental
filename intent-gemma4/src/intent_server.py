@@ -9,7 +9,7 @@ from wyoming.info import Attribution, Describe, HandleModel, HandleProgram, Info
 from wyoming.intent import Entity, Intent, NotRecognized
 from wyoming.server import AsyncEventHandler
 
-from const import AppState
+from const import AppState, __version__
 from intent_mapping import tool_to_intent
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,10 +74,7 @@ class IntentEventHandler(AsyncEventHandler):
         if tool_calls:
             # TODO: multiple tool calls
             tool_name, tool_args = tool_calls[0]
-            try:
-                intent_name, intent_slots = tool_to_intent(tool_name, tool_args)
-            except ValueError:
-                _LOGGER.exception("Failed to map tool call to intent")
+            intent_name, intent_slots = tool_to_intent(tool_name, tool_args)
 
         if not intent_name:
             await self.write_event(
@@ -116,7 +113,7 @@ class IntentEventHandler(AsyncEventHandler):
                     ),
                     installed=True,
                     description="Gemma 4 Intent Recognizer",
-                    version="0.0.1",
+                    version=__version__,
                     models=[
                         HandleModel(
                             name="gemma4",
