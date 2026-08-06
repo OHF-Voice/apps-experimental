@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block heading %}Scripts{% endblock %}
+
+{% block style %}
+  .fields { margin: 0; padding-left: 1.1rem; }
+  .fields li { margin: 0.1rem 0; }
+  .tag { font-size: 0.75rem; padding: 0.05rem 0.35rem; border-radius: 3px;
+         border: 1px solid #bbb; background: #f3f3f3; margin-left: 0.3rem; }
+  .tag.req { border-color: #cf222e; color: #cf222e; }
+  #sentence { font-size: 1rem; padding: 0.5rem 0.4rem; border: 1px solid #bbb;
+              border-radius: 6px; flex: 1; min-width: 16rem; }
+  #language { font-size: 1rem; padding: 0.5rem 0.4rem; border: 1px solid #bbb;
+              border-radius: 6px; width: 4rem; }
+  .off { color: #666; }
+{% endblock %}
+
+{% block content %}
+<p class="muted">Type a command to see which script it would run and what
+variables it would get. This does not actually run the script.</p>
+
+<div class="controls">
+  <input id="sentence" type="text" autocomplete="off" autofocus
+         placeholder="Type a command, e.g. turn on the kitchen lights">
+  <input id="language" type="text" value="en" title="Language code">
+  <button id="test-btn" data-needs-model>Test</button>
+  <span id="test-status"></span>
+</div>
+<div id="result"></div>
+
+<h2>Targeted scripts <span class="muted">({{ targeted|length }})</span></h2>
+{% if targeted %}
+<p class="muted">Exposed to voice in Home Assistant, so the model can call them.</p>
+<table>
+  <thead><tr><th>Script</th><th>Description</th><th>Fields</th></tr></thead>
+  <tbody>
+  {% for script in targeted %}
+    <tr>
+      <td><code>{{ script.name }}</code><br>
+          <span class="muted">{{ script.friendly_name }}</span></td>
+      <td>{{ script.model_description }}
+          {%- if not script.has_description %}
+          <br><span class="muted">No description, so this is just the script's
+          name. Adding one gives the model much more to match on.</span>
+          {%- endif %}</td>
+      <td>{% if script.fields %}
+        <ul class="fields">
+        {% for f in script.fields %}
+          <li><code>{{ f.name }}</code>
+            <span class="muted">{{ f.type }}{% if f.format %}/{{ f.format }}{% endif %}</span>
+            {%- if f.required %}<span class="tag req">required</span>{% endif %}
+            {%- if f.enum_count %}
+              <span class="tag">{{ f.enum_count }} name{{ "" if f.enum_count == 1 else "s" }}</span>
+              <br><span class="muted">{{ f.enum_sample }}{% if f.enum_more %}, +{{ f.enum_more }} more{% endif %}</span>
+            {%- endif %}
+          </li>
+        {% endfor %}
+        </ul>
+      {% else %}<span class="muted">none</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="warn">No scripts are exposed to voice, so the agent cannot do anything.
+Expose a script under its "More info &rarr; Settings &rarr; Voice assistants",
+then restart the app.</p>
+{% endif %}
+
+<h2>Not exposed to voice <span class="muted">({{ untargeted|length }})</span></h2>
+{% if untargeted %}
+<p class="muted">These scripts exist in Home Assistant but are not exposed to
+voice, so the model is never told about them and they cannot be run. Shown here
+with the targeting they would get if you exposed them.</p>
+<table>
+  <thead><tr><th>Script</th><th>Description</th><th>Fields</th></tr></thead>
+  <tbody>
+  {% for script in untargeted %}
+    <tr class="off">
+      <td><code>{{ script.name }}</code><br>
+          <span class="muted">{{ script.friendly_name }}</span></td>
+      <td>{{ script.model_description }}</td>
+      <td>{% if script.fields %}
+        <ul class="fields">
+        {% for f in script.fields %}
+          <li><code>{{ f.name }}</code>
+            <span class="muted">{{ f.type }}</span>
+            {%- if f.enum_count %}<span class="tag">{{ f.enum_count }} names</span>{% endif %}
+          </li>
+        {% endfor %}
+        </ul>
+      {% else %}<span class="muted">none</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">Every script in Home Assistant is exposed to voice.</p>
+{% endif %}
+{% endblock %}
+
+{% block script %}
+<script>
+const testBtn = document.getElementById("test-btn");
+const sentenceEl = document.getElementById("sentence");
+const languageEl = document.getElementById("language");
+const testStatusEl = document.getElementById("test-status");
+const resultEl = document.getElementById("result");
+const testUrl = "{{ url_for('test') }}";
+
+function renderVariables(vars) {
+  const entries = Object.entries(vars);
+  if (!entries.length) return "<div class='muted'>No variables.</div>";
+  return "<table><thead><tr><th>Variable</th><th>Value</th></tr></thead><tbody>" +
+    entries.map(([k, v]) =>
+      "<tr><td>" + esc(k) + "</td><td><code>" + esc(JSON.stringify(v)) +
+      "</code></td></tr>").join("") + "</tbody></table>";
+}
+
+function renderCall(call) {
+  let html = "<div class='summary'>";
+  html += "<div><b>" + (call.can_run ? "<span class='pass'>Would run</span>"
+                                     : "<span class='fail'>Would not run</span>") +
+          "</b> <code>" + esc(call.script_id) + "</code></div>";
+  if (call.unknown_tool) {
+    html += "<div class='fail'>The model made this name up &mdash; it is not a " +
+      "script exposed to voice, so nothing runs.</div>";
+  }
+  if (call.missing_required.length) {
+    html += "<div class='fail'>Required field(s) " +
+      esc(call.missing_required.join(", ")) +
+      " could not be resolved to anything in this home.</div>";
+  }
+  const unresolved = Object.entries(call.unresolved);
+  if (unresolved.length) {
+    html += "<div class='muted'>Dropped (not a known name): " +
+      unresolved.map(([k, v]) => esc(k) + "=" + esc(JSON.stringify(v))).join(", ") +
+      "</div>";
+  }
+  html += renderVariables(call.variables) + "</div>";
+  return html;
+}
+
+async function test() {
+  const text = sentenceEl.value.trim();
+  if (!text) return;
+  testBtn.disabled = true;
+  testStatusEl.textContent = "Recognizing…";
+  resultEl.innerHTML = "";
+  try {
+    const resp = await fetch(testUrl, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text, language: languageEl.value.trim() || "en"})
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+
+    testStatusEl.textContent = data.latency_ms.toFixed(0) + " ms";
+    if (!data.calls.length) {
+      resultEl.innerHTML = "<div class='summary'><div><b>No script matched.</b></div>" +
+        (data.text ? "<div class='muted'>Model said: " + esc(data.text) + "</div>" : "") +
+        "</div>";
+      return;
+    }
+    resultEl.innerHTML = data.calls.map(renderCall).join("");
+  } catch (e) {
+    testStatusEl.textContent = "";
+    resultEl.innerHTML = "<div class='warn'>" + esc(e.message) + "</div>";
+  } finally {
+    testBtn.disabled = false;
+  }
+}
+
+testBtn.addEventListener("click", test);
+sentenceEl.addEventListener("keydown", e => { if (e.key === "Enter") test(); });
+</script>
+{% endblock %}

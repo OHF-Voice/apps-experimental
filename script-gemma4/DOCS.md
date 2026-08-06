@@ -178,8 +178,31 @@ restarts.
 
 ## Web UI
 
-A small web interface is available that shows the generated LLM tools (OpenAI
-function spec). This is for debugging only.
+The **Scripts** page lists every script in Home Assistant, split into the ones
+exposed to voice — the only ones the model is told about and the only ones that
+can run — and the ones that are not, shown with the targeting they would get if
+you exposed them. For each script you see its fields, which of them are
+required, and how many names each field can match (for example, how many entity
+names an `entity` field was filled with).
+
+The same page has a **tester**: type a command and see which script it would
+run and what variables it would get, without actually running it. This is the
+quickest way to find out why a command misfires. It reports three distinct
+outcomes:
+
+- **Would run** — the script and all its variables resolved.
+- **Would not run** — a required field held a name that matches nothing in your
+  home, so running the script would do the wrong thing. Expose the entity or
+  add an [alias][aliases] for it.
+- **The model made this name up** — it produced a tool name that is not an
+  exposed script. Usually a sign the exposed scripts don't cover what you asked.
+
+Names that don't resolve are always dropped rather than passed to the script, so
+a script never receives a name it cannot act on. Optional fields simply go
+missing; required ones stop the script from running.
+
+The raw tools given to the model (OpenAI function spec) are at `/tools.json`,
+for debugging.
 
 A benchmark page is available at `/benchmark` (relative to the ingress URL). It
 runs a fixed fixture of tools and sentences (`benchmark.yaml`) against the loaded

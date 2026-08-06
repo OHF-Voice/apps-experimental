@@ -65,6 +65,14 @@ class Tool:
     name_map: Dict[str, Dict[str, str]] = field(
         default_factory=lambda: defaultdict(dict)
     )
+    # Script name and description as shown in Home Assistant (the model-facing
+    # copy lives in ``tool``, where a missing description falls back to the name).
+    friendly_name: str = ""
+    description: str = ""
+    # True when the script is exposed to voice in Home Assistant. Tools are built
+    # for every script so the web UI can show them, but only exposed ones are
+    # given to the model.
+    exposed: bool = False
 
 
 class HomeAssistant:
@@ -301,7 +309,66 @@ class HomeAssistant:
 
         return satellite_info
 
+    async def _get_blueprint_descriptions(self, websocket, next_id) -> Dict[str, str]:
+        """Blueprint path -> description, for every script blueprint."""
+        await websocket.send_json(
+            {"id": next_id(), "type": "blueprint/list", "domain": "script"}
+        )
+        msg = await websocket.receive_json()
+        if not msg.get("success"):
+            _LOGGER.debug("Could not list script blueprints: %s", msg.get("error"))
+            return {}
+
+        descriptions: Dict[str, str] = {}
+        for path, blueprint_info in (msg.get("result") or {}).items():
+            metadata = (blueprint_info or {}).get("metadata") or {}
+            description = (metadata.get("description") or "").strip()
+            if description:
+                descriptions[path] = description
+
+        return descriptions
+
+    async def _get_script_blueprint_paths(
+        self, session: aiohttp.ClientSession, script_ids: Set[str]
+    ) -> Dict[str, str]:
+        """Script id -> blueprint path, for scripts built from a blueprint.
+
+        The blueprint path is only in the script's stored config, which is
+        REST-only. Scripts whose config cannot be read are skipped: the only
+        cost is a missing description.
+        """
+        paths: Dict[str, str] = {}
+        headers = {"Authorization": f"Bearer {self.token}"}
+        for script_id in sorted(script_ids):
+            url = f"{self.api_url}/config/script/config/{script_id}"
+            try:
+                async with session.get(url, headers=headers) as response:
+                    if response.status != 200:
+                        _LOGGER.debug(
+                            "No stored config for script %s (HTTP %s)",
+                            script_id,
+                            response.status,
+                        )
+                        continue
+
+                    config = await response.json()
+            except (aiohttp.ClientError, ValueError) as err:
+                _LOGGER.debug("Could not read config for script %s: %s", script_id, err)
+                continue
+
+            path = ((config or {}).get("use_blueprint") or {}).get("path")
+            if path:
+                paths[script_id] = path
+
+        return paths
+
     async def get_script_tools(self, info: HomeAssistantInfo) -> List[Tool]:
+        """Build one tool per Home Assistant script.
+
+        Every script gets a tool so the web UI can show what targeting it would
+        get; ``Tool.exposed`` says whether it is exposed to voice. Only exposed
+        tools are given to the model.
+        """
         tools: List[Tool] = []
         now = datetime.now()
 
@@ -371,6 +438,25 @@ class HomeAssistant:
 
                     exposed_scripts.add(script_id)
 
+                # Script entities are the authoritative list of scripts. The
+                # script domain's own services (turn_on, toggle, reload, ...)
+                # also appear in get_services and are not scripts at all.
+                await websocket.send_json({"id": next_id(), "type": "get_states"})
+                msg = await websocket.receive_json()
+                assert msg["success"], msg
+
+                script_names: Dict[str, str] = {}
+                for state_data in msg["result"]:
+                    entity_id = state_data["entity_id"]
+                    domain, _, script_id = entity_id.partition(".")
+                    if domain != "script":
+                        continue
+
+                    friendly_name = state_data.get("attributes", {}).get(
+                        ATTR_FRIENDLY_NAME
+                    )
+                    script_names[script_id] = (friendly_name or "").strip()
+
                 await websocket.send_json(
                     {
                         "id": next_id(),
@@ -380,20 +466,64 @@ class HomeAssistant:
                 msg = await websocket.receive_json()
                 assert msg["success"], msg
 
-                scripts = msg["result"]["script"]
-                for script_id in sorted(exposed_scripts):
-                    script = scripts.get(script_id)
-                    if not script:
-                        continue
+                scripts = msg["result"].get("script") or {}
+
+                # A script built from a blueprint reports an empty description,
+                # so fall back to the blueprint's own description. Without this
+                # the model only sees the script's name.
+                missing_description = {
+                    script_id
+                    for script_id in script_names
+                    if not (
+                        (scripts.get(script_id) or {}).get("description") or ""
+                    ).strip()
+                }
+                blueprint_description: Dict[str, str] = {}
+                if missing_description:
+                    blueprint_descriptions = await self._get_blueprint_descriptions(
+                        websocket, next_id
+                    )
+                    if blueprint_descriptions:
+                        blueprint_paths = await self._get_script_blueprint_paths(
+                            session, missing_description
+                        )
+                        blueprint_description = {
+                            script_id: blueprint_descriptions[path]
+                            for script_id, path in blueprint_paths.items()
+                            if path in blueprint_descriptions
+                        }
+                        _LOGGER.debug(
+                            "Using blueprint descriptions for %s script(s)",
+                            len(blueprint_description),
+                        )
+
+                for script_id in sorted(script_names):
+                    # A script always has a service, but tolerate it missing
+                    # rather than dropping the script from the UI entirely.
+                    script = scripts.get(script_id) or {}
+                    friendly_name = (
+                        script.get("name") or script_names[script_id] or script_id
+                    )
+                    description = (script.get("description") or "").strip()
+                    if not description:
+                        description = blueprint_description.get(script_id, "")
 
                     tool_dict: Dict[str, Any] = {
                         "type": "function",
                         "function": {
                             "name": script_id,
-                            "description": script.get("description") or script["name"],
+                            # The model sees the description, falling back to the
+                            # name when the script has none.
+                            "description": description or friendly_name,
                         },
                     }
-                    tool = Tool(name=script_id, tool=tool_dict)
+                    tool = Tool(
+                        name=script_id,
+                        tool=tool_dict,
+                        friendly_name=friendly_name,
+                        description=description,
+                        exposed=script_id in exposed_scripts,
+                    )
                     tools.append(tool)
 
                     fields = script.get("fields")

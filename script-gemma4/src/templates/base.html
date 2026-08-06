@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Gemma 4 Script Runner{% endblock %}</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1.5rem; color: #1c1c1c; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  nav { margin-bottom: 1rem; font-size: 0.9rem; }
+  nav a { margin-right: 1rem; }
+  .controls { margin: 1rem 0; display: flex; gap: 0.75rem; align-items: center;
+              flex-wrap: wrap; }
+  button { padding: 0.4rem 1rem; font-size: 1rem; cursor: pointer; }
+  button[disabled] { opacity: 0.5; cursor: default; }
+  input[type=number] { width: 4rem; padding: 0.3rem; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem;
+          font-size: 0.9rem; }
+  th, td { border: 1px solid #ccc; padding: 0.35rem 0.5rem; text-align: left;
+           vertical-align: top; }
+  th { background: #f3f3f3; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pass { color: #1a7f37; font-weight: 600; }
+  .fail { color: #cf222e; font-weight: 600; }
+  code { background: #f3f3f3; padding: 0 0.2rem; border-radius: 3px;
+         white-space: pre-wrap; }
+  .summary { background: #f7f7f7; border: 1px solid #ddd; border-radius: 6px;
+             padding: 0.75rem 1rem; margin-top: 1rem; }
+  .summary div { margin: 0.15rem 0; }
+  .muted { color: #666; font-size: 0.85rem; }
+  .warn { background: #fff8e1; border: 1px solid #e6d28a; border-radius: 6px;
+          padding: 0.75rem 1rem; margin-top: 1rem; }
+  #loading { display: none; }
+  #status { margin-left: 0.5rem; }
+  {% block style %}{% endblock %}
+</style>
+</head>
+<body>
+<nav>
+  <a href="{{ url_for('index') }}">Scripts</a>
+  <a href="{{ url_for('benchmark_page') }}">Benchmark</a>
+  <a href="{{ url_for('tools_json') }}">Tools JSON</a>
+</nav>
+<h1>Gemma 4 Script Runner &mdash; {% block heading %}{% endblock %}</h1>
+<div id="loading" class="warn">Model is still loading. On the first boot this
+includes downloading the model (about 4GB) and building the cached state, which
+can take several minutes. Voice commands are not handled until it is ready.</div>
+{% block content %}{% endblock %}
+<script>
+const loadingEl = document.getElementById("loading");
+const statusUrl = "{{ url_for('status') }}";
+
+// Keep model-dependent controls disabled until the model is ready: the first
+// boot spends minutes downloading it, and the web UI is up the whole time.
+async function pollStatus() {
+  let loaded = false;
+  try {
+    const resp = await fetch(statusUrl);
+    loaded = (await resp.json()).model_loaded;
+  } catch (e) {
+    // Fall through and retry.
+  }
+  loadingEl.style.display = loaded ? "none" : "block";
+  for (const el of document.querySelectorAll("[data-needs-model]")) {
+    el.disabled = !loaded;
+  }
+  if (!loaded) {
+    setTimeout(pollStatus, 5000);
+  }
+}
+pollStatus();
+
+function esc(s) {
+  return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+}
+</script>
+{% block script %}{% endblock %}
+</body>
+</html>

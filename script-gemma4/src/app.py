@@ -93,8 +93,13 @@ async def main() -> None:
     hass = HomeAssistant(token=args.hass_token, api_url=args.hass_api)
     hass_info = await hass.get_home_info()
 
-    script_tools = await hass.get_script_tools(hass_info)
-    _LOGGER.debug("Loaded %s script(s)", len(script_tools))
+    all_tools = await hass.get_script_tools(hass_info)
+    # Only scripts exposed to voice are given to the model. The rest are kept for
+    # the web UI, which shows what targeting they would get if exposed.
+    script_tools = [tool for tool in all_tools if tool.exposed]
+    _LOGGER.debug(
+        "Loaded %s script(s), %s exposed to voice", len(all_tools), len(script_tools)
+    )
 
     if not script_tools:
         _LOGGER.warning(
@@ -125,6 +130,7 @@ async def main() -> None:
         tools={t.name: t for t in script_tools},
         recognizer=recognizer,
         llama_executor=llama_executor,
+        all_tools=all_tools,
     )
 
     # Start the web UI before the model loads: the first boot can spend many

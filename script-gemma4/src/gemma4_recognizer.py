@@ -50,6 +50,11 @@ class Gemma4Recognizer:
         debug: bool = False,
     ) -> None:
         self.llm: Optional[Llama] = None
+        # True once load() has finished, including building or restoring the
+        # cached prefix state. `llm` alone is not enough: it is set as soon as
+        # the model is constructed, while the prefix rebuild that follows is the
+        # slow part (minutes on a Raspberry Pi).
+        self.ready = False
         self.state_path = Path(state_path)
         self.repo_id = repo_id
         self.filename = filename
@@ -160,6 +165,8 @@ class Gemma4Recognizer:
                 pickle.dump(state, state_file)
 
             state_metadata_path.write_text(actual_tools_hash, encoding="utf-8")
+
+        self.ready = True
 
     def get_tool_calls(self, text: str, language: str = "en") -> MODEL_RESPONSE:
         assert self.llm, "Not loaded"

@@ -54,6 +54,7 @@ RUN \
 
 COPY src/*.py ./
 COPY src/benchmark.yaml ./
+COPY src/templates/ ./templates/
 
 WORKDIR /
 COPY rootfs /
