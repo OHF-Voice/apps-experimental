@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import math
+import os
 import pickle
 import re
 import time
@@ -81,59 +82,57 @@ class Gemma4Recognizer:
             "content": system_prompt,
         }
 
-    def load(self, tools: List[Dict[str, Any]]) -> None:
-        self.tools = sorted(tools, key=lambda t: t["function"]["name"])
-        if self.llm is None:
-            if self.n_ctx is None:
-                # Estimate context size
-                with io.StringIO() as prompt_file:
-                    print(self.system_prompt, file=prompt_file)
-                    json.dump(self.tools, prompt_file)
-                    num_chars = len(prompt_file.getvalue())
+    def required_n_ctx(self, tools: List[Dict[str, Any]]) -> int:
+        """Context size needed for the fixed prompt plus one utterance.
 
-                # Round up to multiple of 64.
-                # Assume chars / 3 is a conservative upper bound on tokens.
-                # User prompt and templating is covered in overhead.
-                n_ctx = (
-                    math.ceil(
-                        (
-                            math.ceil(num_chars / 3)
-                            + self.max_tokens
-                            + self.n_ctx_overhead
-                        )
-                        / 64
-                    )
-                    * 64
-                )
-            else:
-                n_ctx = self.n_ctx
+        Assumes chars / 3 is a conservative upper bound on tokens; the user
+        prompt and templating are covered by the overhead. Rounded up to a
+        multiple of 64.
+        """
+        with io.StringIO() as prompt_file:
+            print(self.system_prompt, file=prompt_file)
+            json.dump(_sort_tools(tools), prompt_file)
+            num_chars = len(prompt_file.getvalue())
 
-            try:
-                model_path = hf_hub_download(
-                    repo_id=self.repo_id,
-                    filename=self.filename,
-                    local_files_only=True,
-                )
-            except OSError:
-                model_path = hf_hub_download(
-                    repo_id=self.repo_id,
-                    filename=self.filename,
-                    local_files_only=False,
-                )
-            _LOGGER.debug("Loading gemma4: %s", model_path)
-            self.llm = Llama(
-                model_path=model_path,
-                chat_template_kwargs={"enable_thinking": self.enable_thinking},
-                n_ctx=n_ctx,
-                n_threads=self.n_threads,
-                verbose=self.debug,
+        return (
+            math.ceil(
+                (math.ceil(num_chars / 3) + self.max_tokens + self.n_ctx_overhead) / 64
             )
+            * 64
+        )
+
+    def _create_llm(self, n_ctx: int) -> None:
+        """Download the model if needed and construct llama.cpp."""
+        try:
+            model_path = hf_hub_download(
+                repo_id=self.repo_id,
+                filename=self.filename,
+                local_files_only=True,
+            )
+        except OSError:
+            model_path = hf_hub_download(
+                repo_id=self.repo_id,
+                filename=self.filename,
+                local_files_only=False,
+            )
+        _LOGGER.debug("Loading gemma4: %s", model_path)
+        self.llm = Llama(
+            model_path=model_path,
+            chat_template_kwargs={"enable_thinking": self.enable_thinking},
+            n_ctx=n_ctx,
+            n_threads=self.n_threads,
+            verbose=self.debug,
+        )
+
+    def _restore_or_build_state(self) -> None:
+        """Restore the cached prefix for ``self.tools``, or build and save it."""
+        assert self.llm, "Not loaded"
+        assert self.tools is not None, "No tools"
 
         actual_tools_hash = _get_tools_hash(
             f"{self.repo_id}/{self.filename}", self.tools, self.system_prompt
         )
         state_metadata_path = self.state_path.with_suffix(".sha256")
-        rebuild_state = True
         if state_metadata_path.exists() and self.state_path.exists():
             expected_tools_hash = state_metadata_path.read_text(
                 encoding="utf-8"
@@ -144,29 +143,109 @@ class Gemma4Recognizer:
                     state = pickle.load(state_file)
 
                 self.llm.load_state(state)
-                rebuild_state = False
+                return
 
-        if rebuild_state:
-            _LOGGER.info("Retraining...")
-            if self.cache is not None:
-                self.cache.clear()
+        _LOGGER.info("Retraining...")
+        if self.cache is not None:
+            self.cache.clear()
 
-            start_time = time.monotonic()
-            self.llm.create_chat_completion(
-                messages=[self.system_message],  # type: ignore
-                tools=self.tools,  # type: ignore
-                max_tokens=0,
+        start_time = time.monotonic()
+        self.llm.create_chat_completion(
+            messages=[self.system_message],  # type: ignore
+            tools=self.tools,  # type: ignore
+            max_tokens=0,
+        )
+        end_time = time.monotonic()
+        _LOGGER.debug("Rebuilt state in %s second(s)", end_time - start_time)
+
+        # Write to a temporary file and swap, so a failure part-way through
+        # cannot leave a truncated state behind. The hash is written last: if
+        # anything interrupts us, the mismatch just costs a rebuild next start.
+        _LOGGER.debug("Saving state: %s", self.state_path)
+        tmp_state_path = self.state_path.with_suffix(".tmp")
+        with open(tmp_state_path, "wb") as state_file:
+            state = self.llm.save_state()
+            pickle.dump(state, state_file)
+
+        os.replace(tmp_state_path, self.state_path)
+        state_metadata_path.write_text(actual_tools_hash, encoding="utf-8")
+
+    def load(self, tools: List[Dict[str, Any]]) -> None:
+        self.tools = _sort_tools(tools)
+        if self.llm is None:
+            self._create_llm(
+                self.n_ctx
+                if self.n_ctx is not None
+                else self.required_n_ctx(self.tools)
             )
-            end_time = time.monotonic()
-            _LOGGER.debug("Rebuilt state in %s second(s)", end_time - start_time)
-            _LOGGER.debug("Saving state: %s", self.state_path)
-            with open(self.state_path, "wb") as state_file:
-                state = self.llm.save_state()
-                pickle.dump(state, state_file)
 
-            state_metadata_path.write_text(actual_tools_hash, encoding="utf-8")
+        self._restore_or_build_state()
+        self.ready = True
+
+    def reload(self, tools: List[Dict[str, Any]]) -> None:
+        """Swap in a new tool set, keeping the working one if the swap fails.
+
+        Must be called on the same single thread that serves recognition.
+        """
+        assert self.llm, "Not loaded"
+        assert self.tools is not None, "Not loaded"
+
+        new_tools = _sort_tools(tools)
+        if new_tools == self.tools:
+            _LOGGER.debug("Tools unchanged, nothing to reload")
+            return
+
+        old_tools = self.tools
+
+        # An auto-sized context has to grow with the tool set: the model is
+        # constructed once, so a larger prompt would otherwise overflow it.
+        needed_n_ctx = self.required_n_ctx(new_tools)
+        grow_context = (self.n_ctx is None) and (needed_n_ctx > self.llm.n_ctx())
+
+        # Snapshot the live prefix so a failed rebuild can be undone. Pointless
+        # when the context has to grow, since the state cannot be restored into
+        # a differently sized context.
+        live_state = None if grow_context else self.llm.save_state()
+
+        self.ready = False
+        if self.cache is not None:
+            # Cached responses were produced against the old tools.
+            self.cache.clear()
+
+        try:
+            self.tools = new_tools
+            if grow_context:
+                _LOGGER.info(
+                    "Growing context from %s to %s token(s) for %s tool(s)",
+                    self.llm.n_ctx(),
+                    needed_n_ctx,
+                    len(new_tools),
+                )
+                self._create_llm(needed_n_ctx)
+
+            self._restore_or_build_state()
+        except Exception:
+            self.tools = old_tools
+            if live_state is None:
+                # The model was replaced, so there is nothing to roll back to.
+                _LOGGER.exception(
+                    "Failed to load %s tool(s) and could not roll back; "
+                    "restart the app",
+                    len(new_tools),
+                )
+                raise
+
+            _LOGGER.exception(
+                "Failed to load %s tool(s), keeping the previous %s",
+                len(new_tools),
+                len(old_tools),
+            )
+            self.llm.load_state(live_state)
+            self.ready = True
+            raise
 
         self.ready = True
+        _LOGGER.info("Now using %s tool(s)", len(new_tools))
 
     def get_tool_calls(self, text: str, language: str = "en") -> MODEL_RESPONSE:
         assert self.llm, "Not loaded"
@@ -439,6 +518,11 @@ def _split_args(raw_args: str) -> List[str]:
         parts.append(part)
 
     return parts
+
+
+def _sort_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Tools in a stable order, so the prefix hash does not depend on ordering."""
+    return sorted(tools, key=lambda t: t["function"]["name"])
 
 
 def _get_tools_hash(

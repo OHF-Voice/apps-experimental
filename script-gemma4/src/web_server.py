@@ -3,15 +3,17 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 from flask import Flask, Response, jsonify, render_template, request, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import benchmark
+import overrides
 from benchmark import Fixture
 from const import AppState
 from hass_api import Tool
+from overrides import ScriptOverrides
 from tool_mapping import map_tool_call, required_fields
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,7 +52,7 @@ def _describe_fields(tool: Tool) -> List[Dict[str, Any]]:
     return fields
 
 
-def _describe_script(tool: Tool) -> Dict[str, Any]:
+def _describe_script(tool: Tool, targeted: bool) -> Dict[str, Any]:
     function = tool.tool.get("function") or {}
     return {
         "name": tool.name,
@@ -62,6 +64,10 @@ def _describe_script(tool: Tool) -> Dict[str, Any]:
         "model_description": function.get("description") or "",
         "has_description": bool(tool.description),
         "exposed": tool.exposed,
+        "targeted": targeted,
+        # Targeted despite not being exposed to voice in Home Assistant: worth
+        # calling out, since this app runs scripts.
+        "force_enabled": targeted and not tool.exposed,
         "fields": _describe_fields(tool),
     }
 
@@ -88,12 +94,114 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
     @flask_app.route("/", methods=["GET"])
     def index():
         """Show every script, split by whether the model can call it."""
-        scripts = [_describe_script(tool) for tool in state.all_tools]
+        scripts = [
+            _describe_script(tool, state.overrides.targets(tool))
+            for tool in state.all_tools
+        ]
         return render_template(
             "home.html",
-            targeted=[s for s in scripts if s["exposed"]],
-            untargeted=[s for s in scripts if not s["exposed"]],
+            targeted=[s for s in scripts if s["targeted"]],
+            untargeted=[s for s in scripts if not s["targeted"]],
+            can_save=state.overrides_path is not None,
         )
+
+    def _requested_names(body: Dict[str, Any]) -> Optional[Set[str]]:
+        """The script names the page wants targeted, or None if malformed."""
+        names = body.get("targeted")
+        if not isinstance(names, list):
+            return None
+
+        known = {tool.name for tool in state.all_tools}
+        return {str(name) for name in names} & known
+
+    @flask_app.route("/overrides/estimate", methods=["POST"])
+    def overrides_estimate():
+        """Report what a prospective tool set would cost, before applying it."""
+        body = request.get_json(silent=True) or {}
+        names = _requested_names(body)
+        if names is None:
+            return jsonify({"error": "No script list given"}), 400
+
+        tools = [tool.tool for tool in state.all_tools if tool.name in names]
+        return jsonify(
+            {
+                "num_tools": len(tools),
+                "n_ctx": state.recognizer.required_n_ctx(tools),
+                "current_n_ctx": (
+                    state.recognizer.llm.n_ctx()
+                    if state.recognizer.llm is not None
+                    else None
+                ),
+                "fixed_n_ctx": state.recognizer.n_ctx is not None,
+            }
+        )
+
+    @flask_app.route("/overrides", methods=["POST"])
+    def overrides_apply():
+        """Change which scripts are targeted, then rebuild the model prefix.
+
+        Recognition is unavailable while the prefix is rebuilt, which can take
+        minutes on slow hardware, so this is deliberately an explicit action
+        rather than something that happens per checkbox.
+        """
+        if not state.recognizer.ready:
+            return jsonify({"error": "Model is still loading"}), 503
+
+        body = request.get_json(silent=True) or {}
+        names = _requested_names(body)
+        if names is None:
+            return jsonify({"error": "No script list given"}), 400
+
+        # A second apply while one is in flight would race on the model.
+        if not state.reload_lock.acquire(blocking=False):
+            return jsonify({"error": "Already applying a change"}), 409
+
+        try:
+            new_overrides = ScriptOverrides(
+                enabled={
+                    tool.name
+                    for tool in state.all_tools
+                    if (tool.name in names) and not tool.exposed
+                },
+                disabled={
+                    tool.name
+                    for tool in state.all_tools
+                    if (tool.name not in names) and tool.exposed
+                },
+            )
+            targeted = new_overrides.select(state.all_tools)
+
+            # Swap on the model worker: it owns the model, and a queued
+            # recognition will wait rather than race the rebuild.
+            future = state.llama_executor.submit(
+                state.recognizer.reload, [tool.tool for tool in targeted]
+            )
+            try:
+                future.result()
+            except Exception as err:  # pylint: disable=broad-except
+                _LOGGER.exception("Failed to apply script overrides")
+                return jsonify({"error": f"Could not apply: {err}"}), 500
+
+            # Only record the change once the model actually accepted it.
+            state.overrides = new_overrides
+            state.set_targeted(targeted)
+            if state.overrides_path is not None:
+                overrides.save(state.overrides_path, new_overrides)
+
+            return jsonify(
+                {
+                    "num_targeted": len(targeted),
+                    "enabled": sorted(new_overrides.enabled),
+                    "disabled": sorted(new_overrides.disabled),
+                    "n_ctx": (
+                        state.recognizer.llm.n_ctx()
+                        if state.recognizer.llm is not None
+                        else None
+                    ),
+                }
+            )
+        finally:
+            state.reload_lock.release()
 
     @flask_app.route("/tools.json", methods=["GET"])
     def tools_json():

@@ -7,9 +7,11 @@ import logging
 import signal
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+from pathlib import Path
 
 from wyoming.server import AsyncServer
 
+import overrides
 from const import BASE_DIR, AppState
 from gemma4_recognizer import Gemma4Recognizer
 from hass_api import HomeAssistant
@@ -80,6 +82,12 @@ async def main() -> None:
         default=None,
         help="Path to benchmark fixture YAML (default: bundled benchmark.yaml)",
     )
+    parser.add_argument(
+        "--overrides",
+        default=None,
+        help="Path to the YAML file recording which scripts are targeted when "
+        "that differs from Home Assistant's voice exposure",
+    )
     #
     parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to console"
@@ -94,16 +102,35 @@ async def main() -> None:
     hass_info = await hass.get_home_info()
 
     all_tools = await hass.get_script_tools(hass_info)
-    # Only scripts exposed to voice are given to the model. The rest are kept for
-    # the web UI, which shows what targeting they would get if exposed.
-    script_tools = [tool for tool in all_tools if tool.exposed]
+
+    # Home Assistant's voice exposure is the default; the overrides file records
+    # the deliberate exceptions. Scripts that are not targeted are still kept for
+    # the web UI, which shows what targeting they would get.
+    overrides_path = Path(args.overrides) if args.overrides else None
+    script_overrides = overrides.load(overrides_path)
+    if all_tools:
+        # Only prune against a script list we actually got: an empty list means
+        # something is wrong with Home Assistant, not that every script is gone.
+        dropped = script_overrides.prune({tool.name for tool in all_tools})
+        if dropped:
+            _LOGGER.info(
+                "Forgetting override(s) for deleted script(s): %s", sorted(dropped)
+            )
+            if overrides_path is not None:
+                overrides.save(overrides_path, script_overrides)
+
+    script_tools = script_overrides.select(all_tools)
     _LOGGER.debug(
-        "Loaded %s script(s), %s exposed to voice", len(all_tools), len(script_tools)
+        "Loaded %s script(s), %s targeted (%s exposed to voice)",
+        len(all_tools),
+        len(script_tools),
+        sum(1 for tool in all_tools if tool.exposed),
     )
 
     if not script_tools:
         _LOGGER.warning(
-            "No scripts have been exposed to voice. Agent will not function."
+            "No scripts are targeted. Expose a script to voice, or enable one in "
+            "the web UI. Agent will not function."
         )
 
     _LOGGER.info(
@@ -131,6 +158,8 @@ async def main() -> None:
         recognizer=recognizer,
         llama_executor=llama_executor,
         all_tools=all_tools,
+        overrides=script_overrides,
+        overrides_path=overrides_path,
     )
 
     # Start the web UI before the model loads: the first boot can spend many

@@ -21,6 +21,7 @@ exec .venv/bin/python3 app.py \
     --http-host 0.0.0.0 \
     --http-port 5000 \
     --llama-state '/data/llama_state.bin' \
+    --overrides '/data/overrides.yaml' \
     --hf-repo "$(bashio::config 'hf_repo')" \
     --hf-filename "$(bashio::config 'hf_model')" \
     --tool-call-cache-size "$(bashio::config 'tool_call_cache_size')" \

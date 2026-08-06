@@ -104,12 +104,15 @@ with Home Assistant, leave a core or two free (for example, set `n_threads` to
 
 Create scripts and [expose][] them to voice by "More Info -> Settings -> Voice
 assistants" and clicking "Expose". You **must** also expose any entities that
-you want to be able to refer to by name (or [alias][aliases]). After any changes
-are made, restart the app.
+you want to be able to refer to by name (or [alias][aliases]). Restart the app
+after any changes: it reads Home Assistant once, on start.
 
-Give your scripts descriptive names and consider adding a description with more
-details. Add [fields][] to have Gemma 4 pass variables to your script. Make sure
-to add descriptions!
+Give your scripts descriptive names and a description — the description is what
+the model matches a command against, so it matters more than the name. A script
+built from a blueprint inherits the blueprint's description if it has none of its
+own. The Scripts page shows what the model ends up being told for each script.
+Add [fields][] to have Gemma 4 pass variables to your script. Make sure to add
+descriptions!
 
 See the [blueprints][] for example scripts.
 
@@ -200,6 +203,37 @@ outcomes:
 Names that don't resolve are always dropped rather than passed to the script, so
 a script never receives a name it cannot act on. Optional fields simply go
 missing; required ones stop the script from running.
+
+### Choosing which scripts are targeted
+
+Each script has a checkbox. Exposing a script to voice in Home Assistant still
+targets it by default, so you only need this page for the exceptions:
+
+- **Untick a targeted script** to keep it out of the tool set without changing
+  its exposure in Home Assistant. Useful for a script the model keeps confusing
+  with another one.
+- **Tick an untargeted script** to add it to the tool set even though it is not
+  exposed to voice. This app *runs* scripts, so only do this for scripts you
+  want a voice command to be able to trigger — a script you deliberately left
+  unexposed is deliberately out of reach. Scripts targeted this way are labelled
+  *enabled here*.
+
+Changes are staged until you press **Apply**, which rebuilds the model prefix:
+recognition pauses while that happens, from a few seconds on a fast machine to
+several minutes on a Raspberry Pi. The page shows how large the context would
+become before you commit, since that drives RAM use.
+
+The exceptions are stored in `/data/overrides.yaml` as two lists:
+
+```yaml
+scripts:
+  enabled: [garage_door]     # not exposed to voice, but targeted
+  disabled: [nightly_backup] # exposed to voice, but not targeted
+```
+
+Only the exceptions are stored, never the resulting list, so exposing a new
+script in Home Assistant is picked up without touching this file. Entries naming
+scripts that no longer exist are dropped automatically on the next start.
 
 The raw tools given to the model (OpenAI function spec) are at `/tools.json`,
 for debugging.

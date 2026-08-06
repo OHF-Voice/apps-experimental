@@ -12,6 +12,12 @@
   #language { font-size: 1rem; padding: 0.5rem 0.4rem; border: 1px solid #bbb;
               border-radius: 6px; width: 4rem; }
   .off { color: #666; }
+  td.pick { text-align: center; width: 3rem; }
+  #apply-bar { position: sticky; bottom: 0; background: #fff; padding: 0.75rem 0;
+               border-top: 1px solid #ddd; margin-top: 1rem; display: flex;
+               gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+  #apply-bar.hidden { display: none; }
+  .tag.forced { border-color: #bf8700; color: #bf8700; background: #fff8e1; }
 {% endblock %}
 
 {% block content %}
@@ -29,14 +35,22 @@ variables it would get. This does not actually run the script.</p>
 
 <h2>Targeted scripts <span class="muted">({{ targeted|length }})</span></h2>
 {% if targeted %}
-<p class="muted">Exposed to voice in Home Assistant, so the model can call them.</p>
+<p class="muted">The model is told about these and can run them. Untick one to
+keep it out of the tool set without changing its exposure in Home Assistant.</p>
 <table>
-  <thead><tr><th>Script</th><th>Description</th><th>Fields</th></tr></thead>
+  <thead><tr><th class="pick">Target</th><th>Script</th><th>Description</th><th>Fields</th></tr></thead>
   <tbody>
   {% for script in targeted %}
     <tr>
+      <td class="pick"><input type="checkbox" class="target" checked
+                             data-script="{{ script.name }}"
+                             {% if not can_save %}disabled{% endif %}></td>
       <td><code>{{ script.name }}</code><br>
-          <span class="muted">{{ script.friendly_name }}</span></td>
+          <span class="muted">{{ script.friendly_name }}</span>
+          {%- if script.force_enabled %}
+          <span class="tag forced" title="Not exposed to voice in Home Assistant;
+          targeted because you enabled it here">enabled here</span>
+          {%- endif %}</td>
       <td>{{ script.model_description }}
           {%- if not script.has_description %}
           <br><span class="muted">No description, so this is just the script's
@@ -61,23 +75,30 @@ variables it would get. This does not actually run the script.</p>
   </tbody>
 </table>
 {% else %}
-<p class="warn">No scripts are exposed to voice, so the agent cannot do anything.
-Expose a script under its "More info &rarr; Settings &rarr; Voice assistants",
-then restart the app.</p>
+<p class="warn">No scripts are targeted, so the agent cannot do anything. Expose a
+script under its "More info &rarr; Settings &rarr; Voice assistants", or tick one
+below.</p>
 {% endif %}
 
-<h2>Not exposed to voice <span class="muted">({{ untargeted|length }})</span></h2>
+<h2>Not targeted <span class="muted">({{ untargeted|length }})</span></h2>
 {% if untargeted %}
-<p class="muted">These scripts exist in Home Assistant but are not exposed to
-voice, so the model is never told about them and they cannot be run. Shown here
-with the targeting they would get if you exposed them.</p>
+<p class="muted">The model is never told about these, so they cannot be run.
+Ticking one adds it to the tool set even if it is not exposed to voice in Home
+Assistant &mdash; this app runs scripts, so only do that for scripts you want a
+voice command to be able to trigger.</p>
 <table>
-  <thead><tr><th>Script</th><th>Description</th><th>Fields</th></tr></thead>
+  <thead><tr><th class="pick">Target</th><th>Script</th><th>Description</th><th>Fields</th></tr></thead>
   <tbody>
   {% for script in untargeted %}
     <tr class="off">
+      <td class="pick"><input type="checkbox" class="target"
+                             data-script="{{ script.name }}"
+                             {% if not can_save %}disabled{% endif %}></td>
       <td><code>{{ script.name }}</code><br>
-          <span class="muted">{{ script.friendly_name }}</span></td>
+          <span class="muted">{{ script.friendly_name }}</span>
+          {%- if script.exposed %}
+          <span class="tag">exposed in HA</span>
+          {%- endif %}</td>
       <td>{{ script.model_description }}</td>
       <td>{% if script.fields %}
         <ul class="fields">
@@ -94,7 +115,18 @@ with the targeting they would get if you exposed them.</p>
   </tbody>
 </table>
 {% else %}
-<p class="muted">Every script in Home Assistant is exposed to voice.</p>
+<p class="muted">Every script in Home Assistant is targeted.</p>
+{% endif %}
+
+{% if can_save %}
+<div id="apply-bar" class="hidden">
+  <button id="apply-btn" data-needs-model>Apply</button>
+  <button id="reset-btn">Discard changes</button>
+  <span id="apply-info" class="muted"></span>
+</div>
+{% else %}
+<p class="muted">Targeting cannot be changed: this app was started without a
+path to save the choice to.</p>
 {% endif %}
 {% endblock %}
 
@@ -173,5 +205,81 @@ async function test() {
 
 testBtn.addEventListener("click", test);
 sentenceEl.addEventListener("keydown", e => { if (e.key === "Enter") test(); });
+
+{% if can_save %}
+// --- Which scripts are targeted -------------------------------------------
+// Changes are staged and applied together: applying rebuilds the model prefix,
+// which takes seconds on a fast box and minutes on a Raspberry Pi.
+const applyBar = document.getElementById("apply-bar");
+const applyBtn = document.getElementById("apply-btn");
+const resetBtn = document.getElementById("reset-btn");
+const applyInfo = document.getElementById("apply-info");
+const boxes = [...document.querySelectorAll("input.target")];
+const initial = new Map(boxes.map(b => [b.dataset.script, b.checked]));
+const applyUrl = "{{ url_for('overrides_apply') }}";
+const estimateUrl = "{{ url_for('overrides_estimate') }}";
+
+function selectedNames() {
+  return boxes.filter(b => b.checked).map(b => b.dataset.script);
+}
+function isDirty() {
+  return boxes.some(b => b.checked !== initial.get(b.dataset.script));
+}
+
+async function refreshApplyBar() {
+  const dirty = isDirty();
+  applyBar.classList.toggle("hidden", !dirty);
+  if (!dirty) return;
+
+  const names = selectedNames();
+  applyInfo.textContent = names.length + " script(s) selected. Applying rebuilds " +
+    "the model prefix; recognition pauses until it finishes.";
+  try {
+    const resp = await fetch(estimateUrl, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({targeted: names})
+    });
+    if (!resp.ok) return;
+    const est = await resp.json();
+    let note = " Context would be " + est.n_ctx + " tokens";
+    if (est.current_n_ctx) note += " (currently " + est.current_n_ctx + ")";
+    if (est.fixed_n_ctx) note += ", but n_ctx is set manually so it will not change";
+    applyInfo.textContent += note + ".";
+  } catch (e) {
+    // The estimate is advisory; leave the base message in place.
+  }
+}
+
+async function applyChanges() {
+  applyBtn.disabled = true;
+  resetBtn.disabled = true;
+  applyInfo.textContent = "Applying… this can take minutes on slow hardware.";
+  try {
+    const resp = await fetch(applyUrl, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({targeted: selectedNames()})
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+    // Reload so both tables, the tags, and the counts reflect the new state.
+    window.location.reload();
+  } catch (e) {
+    applyInfo.innerHTML = "<span class='fail'>" + esc(e.message) + "</span>";
+    applyBtn.disabled = false;
+    resetBtn.disabled = false;
+  }
+}
+
+for (const box of boxes) {
+  box.addEventListener("change", refreshApplyBar);
+}
+applyBtn.addEventListener("click", applyChanges);
+resetBtn.addEventListener("click", () => {
+  for (const box of boxes) box.checked = initial.get(box.dataset.script);
+  refreshApplyBar();
+});
+{% endif %}
 </script>
 {% endblock %}

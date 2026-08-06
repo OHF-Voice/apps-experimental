@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4.0
+
+- The web UI home page now lists every script in Home Assistant, split into the
+  ones the model can call and the ones it cannot, with each script's fields and
+  how many names each field can match
+- Add a sentence tester: type a command and see which script it would run and
+  with what variables, without running it
+- Choose which scripts are targeted, independently of Home Assistant's voice
+  exposure. Exposure remains the default; only the exceptions are stored (in
+  `/data/overrides.yaml`), so newly exposed scripts are still picked up, and
+  entries for deleted scripts are dropped automatically. Applying a change
+  rebuilds the model prefix and grows the context if the new tool set needs it
+- A script built from a blueprint reported no description, so the model was only
+  told the script's *name*; it now inherits the blueprint's description
+- Don't pass a name the model invented to a script as a null variable. Drop it
+  instead, and don't run the script at all if it was a required field
+- The "model loading" notice now covers building the model prefix, not just
+  downloading the model
+
 ## 1.3.0
 
 - Web UI and container health check now come up before the model loads, so the
