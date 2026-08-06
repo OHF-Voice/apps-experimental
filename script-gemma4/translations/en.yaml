@@ -5,7 +5,7 @@ configuration:
     description: >-
       Hugging Face repository id for Gemma4 (GGUF).
       Official repo: https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF
-  hf_filename:
+  hf_model:
     name: Gemma4 filename
     description: >-
       Model filename for Gemma4 (GGUF) in the repo.
@@ -26,6 +26,12 @@ configuration:
     name: Context overhead
     description: >-
       Number of tokens expected beyond user prompt (only when n_ctx = auto).
+  n_threads:
+    name: CPU threads
+    description: >-
+      CPU threads used by the model (0 = llama.cpp default). More threads gives
+      little speedup and can cause latency spikes on a box shared with Home
+      Assistant; leaving a core or two free is usually more consistent.
   max_tokens:
     name: Maximum tokens
     description: >-

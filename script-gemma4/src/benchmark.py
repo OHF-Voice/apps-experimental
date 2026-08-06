@@ -109,7 +109,9 @@ def run(recognizer: Any, fixture: Fixture, passes: int = 3) -> Dict[str, Any]:
         "median_latency_ms": (
             statistics.median(median_latencies) * 1000.0 if median_latencies else None
         ),
-        "max_latency_ms": (max(median_latencies) * 1000.0 if median_latencies else None),
+        "max_latency_ms": (
+            max(median_latencies) * 1000.0 if median_latencies else None
+        ),
         "overall_tokens_per_second": (
             (total_completion_tokens / total_latency) if total_latency > 0 else None
         ),

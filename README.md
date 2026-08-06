@@ -20,6 +20,11 @@ Expect things to be unpolished!
 - [intent-sentence-transformers](intent-sentence-transformers/DOCS.md) - [conversation agent][conversation] app using [sentence transformers][sentence_transformers]
     - Flexibly match voice commands with intents and actions
 
+## Conversation Agents
+
+- [script-gemma4](script-gemma4/DOCS.md) - [conversation agent][conversation] app that runs Home Assistant [scripts][] with [Gemma 4][gemma4]
+    - Runs on the CPU with [llama.cpp][]; needs scripts written for it
+
 ## Wake Word Detection
 
 - [wake-phonmatchnet](wake-phonmatchnet/DOCS.md) - [wake word][wake_word] app using [PhonMatchNet][phonmatchnet]
@@ -33,5 +38,8 @@ Expect things to be unpolished!
 [qwen-asr]: https://github.com/QwenLM/Qwen3-ASR/
 [sentence_transformers]: https://huggingface.co/sentence-transformers
 [conversation]: https://www.home-assistant.io/integrations/conversation/
+[scripts]: https://www.home-assistant.io/integrations/script/
+[gemma4]: https://deepmind.google/models/gemma/gemma-4/
+[llama.cpp]: https://github.com/ggml-org/llama.cpp
 [wake_word]: https://www.home-assistant.io/integrations/wake_word/
 [phonmatchnet]: https://github.com/ncsoft/PhonMatchNet

@@ -113,10 +113,8 @@ async def main() -> None:
         n_ctx_overhead=args.n_ctx_overhead,
         n_threads=args.n_threads if args.n_threads > 0 else None,
         max_tokens=args.max_tokens,
+        debug=args.debug,
     )
-
-    tools_list = [t.tool for t in script_tools]
-    recognizer.load(tools_list)
 
     # Single worker serializes all model access (live recognition + benchmark).
     llama_executor = ThreadPoolExecutor(max_workers=1)
@@ -129,16 +127,27 @@ async def main() -> None:
         llama_executor=llama_executor,
     )
 
+    # Start the web UI before the model loads: the first boot can spend many
+    # minutes downloading the model and building the cached state, and the UI
+    # shows a "model loading" notice until it is ready. This also lets the
+    # container's health check pass while the download is in progress.
     benchmark_fixture_path = args.benchmark_fixture or (BASE_DIR / "benchmark.yaml")
     flask_app = make_web_server(state, benchmark_fixture_path)
     flask_thread = run_web_server(flask_app, host=args.http_host, port=args.http_port)
     flask_thread.start()
 
+    # Load on the model worker thread so all model access stays on one thread
+    # (a benchmark request arriving during load queues behind it).
+    loop = asyncio.get_running_loop()
+    tools_list = [t.tool for t in script_tools]
+    await loop.run_in_executor(llama_executor, recognizer.load, tools_list)
+
+    # Only serve Wyoming once the model is ready: the discovery service waits
+    # for this port before telling Home Assistant about the agent.
     server = AsyncServer.from_uri(args.uri)
     _LOGGER.info("Ready")
 
     # Handle graceful termination
-    loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
 
     def request_stop():

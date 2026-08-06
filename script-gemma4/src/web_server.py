@@ -16,9 +16,7 @@ _LOGGER = logging.getLogger(__name__)
 MAX_PASSES = 10
 
 
-def make_web_server(
-    state: AppState, benchmark_fixture_path: Union[str, Path]
-) -> Flask:
+def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -> Flask:
     flask_app = Flask(__name__)
     flask_app.secret_key = "e603c0d4-18d8-4018-ad45-4c89a0aa9941"
 
@@ -46,7 +44,14 @@ def make_web_server(
 
     @flask_app.route("/health")
     def health():
+        # Deliberately "ok" while the model is still loading: the first boot can
+        # spend many minutes downloading it, and the container should not be
+        # restarted for being slow. Use /status to see readiness.
         return {"status": "ok"}, 200
+
+    @flask_app.route("/status")
+    def status():
+        return {"model_loaded": state.recognizer.llm is not None}, 200
 
     @flask_app.route("/benchmark", methods=["GET"])
     def benchmark_page():
@@ -56,6 +61,8 @@ def make_web_server(
     def benchmark_run():
         if fixture is None:
             return {"error": fixture_error or "No benchmark fixture"}, 500
+        if state.recognizer.llm is None:
+            return {"error": "Model is still loading"}, 503
 
         body = request.get_json(silent=True) or {}
         try:
@@ -128,6 +135,8 @@ BENCHMARK_HTML = """<!doctype html>
   .summary div { margin: 0.15rem 0; }
   .muted { color: #666; font-size: 0.85rem; }
   #status { margin-left: 0.5rem; }
+  #loading { display: none; background: #fff8e1; border: 1px solid #e6d28a;
+             border-radius: 6px; padding: 0.75rem 1rem; margin-top: 1rem; }
 </style>
 </head>
 <body>
@@ -135,6 +144,9 @@ BENCHMARK_HTML = """<!doctype html>
 <p class="muted">Runs a fixed tool/sentence fixture against the loaded model.
 Live state is snapshotted and restored, so this does not disturb the running
 assistant &mdash; but voice handling pauses for the benchmark's duration.</p>
+<div id="loading">Model is still loading. On the first boot this includes
+downloading the model (about 4GB) and building the cached state, which can take
+several minutes. Voice commands are not handled until it is ready.</div>
 <div class="controls">
   <label>Passes <input id="passes" type="number" min="1" max="10" value="3"></label>
   <button id="run">Run benchmark</button>
@@ -147,6 +159,30 @@ const runBtn = document.getElementById("run");
 const statusEl = document.getElementById("status");
 const summaryEl = document.getElementById("summary");
 const resultsEl = document.getElementById("results");
+const loadingEl = document.getElementById("loading");
+
+const base = window.location.pathname.replace(/\\/+$/, "");
+const runUrl = base + "/run";
+const statusUrl = base.replace(/\\/benchmark$/, "") + "/status";
+
+// Keep the Run button disabled until the model is ready: the first boot spends
+// minutes downloading it, and the web UI is up the whole time.
+async function pollStatus() {
+  try {
+    const resp = await fetch(statusUrl);
+    const data = await resp.json();
+    if (data.model_loaded) {
+      loadingEl.style.display = "none";
+      runBtn.disabled = false;
+      return;
+    }
+  } catch (e) {
+    // Fall through and retry.
+  }
+  loadingEl.style.display = "block";
+  runBtn.disabled = true;
+  setTimeout(pollStatus, 5000);
+}
 
 function fmt(n, d) { return (n === null || n === undefined) ? "&mdash;" : n.toFixed(d); }
 function esc(s) {
@@ -164,10 +200,9 @@ async function run() {
   summaryEl.innerHTML = "";
   resultsEl.innerHTML = "";
   const passes = parseInt(document.getElementById("passes").value, 10) || 3;
-  const url = window.location.pathname.replace(/\\/+$/, "") + "/run";
   const started = performance.now();
   try {
-    const resp = await fetch(url, {
+    const resp = await fetch(runUrl, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({passes})
@@ -232,6 +267,7 @@ function render(data) {
 }
 
 runBtn.addEventListener("click", run);
+pollStatus();
 </script>
 </body>
 </html>
