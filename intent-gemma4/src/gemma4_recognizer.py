@@ -62,9 +62,15 @@ class Gemma4Recognizer:
         chat_format: Optional[str] = None,
         flash_attn: bool = False,
         prompt_lookup: int = 0,
+        grammar: bool = False,
         debug: bool = False,
     ) -> None:
+        # GBNF grammar-constrained decoding: only grammar-legal tool calls (or
+        # free-text refusals) can be sampled. See tool_grammar.build_gbnf.
+        self.use_grammar = grammar
+        self._grammar: Optional[Any] = None
         self.llm: Optional[Llama] = None
+        self._name_enums: Dict[str, set] = {}
         self.state_path = Path(state_path)
         self.repo_id = repo_id
         self.filename = filename
@@ -102,6 +108,28 @@ class Gemma4Recognizer:
 
     def load(self, tools: List[Dict[str, Any]], build_prefix: bool = True) -> None:
         self.tools = sorted(tools, key=lambda t: t["function"]["name"])
+        # Lowercased `name` enums per tool, for scrubbing off-enum names the
+        # model invents (enums steer generation but do not constrain it).
+        self._name_enums = {}
+        for tool in self.tools:
+            function = tool.get("function") or {}
+            name_schema = ((function.get("parameters") or {}).get("properties") or {}).get(
+                "name"
+            ) or {}
+            enum = name_schema.get("enum")
+            if enum:
+                self._name_enums[function.get("name")] = {
+                    str(value).lower() for value in enum
+                }
+
+        if self.use_grammar:
+            from llama_cpp import LlamaGrammar
+
+            from tool_grammar import build_gbnf
+
+            self._grammar = LlamaGrammar.from_string(
+                build_gbnf(self.tools), verbose=False
+            )
         if self.llm is None:
             if self.n_ctx is None:
                 # Estimate context size
@@ -203,6 +231,41 @@ class Gemma4Recognizer:
 
             state_metadata_path.write_text(actual_tools_hash, encoding="utf-8")
 
+    def _scrub_off_enum_names(
+        self, tool_calls: List[TOOL_CALL]
+    ) -> List[TOOL_CALL]:
+        """Drop a `name` argument that names no real entity when a location was
+        also given.
+
+        Enums steer generation but do not constrain it: the model sometimes
+        copies a resolved area into `name` ("kill the lights in Natalie's room"
+        -> name="Natalie's Bedroom"), which makes Home Assistant fail on entity
+        matching even though area+domain would succeed. Entity names take
+        priority, so a `name` that IS in the enum is always kept (e.g. a light
+        group named "Basement" wins over the area "Basement"). An off-enum
+        `name` is only dropped when `area`/`floor` remain to carry the
+        targeting -- never when it is the only targeting slot (degrading to a
+        bare domain could target the whole house).
+        """
+        scrubbed: List[TOOL_CALL] = []
+        for tool_name, args in tool_calls:
+            enum = self._name_enums.get(tool_name)
+            name = args.get("name")
+            if (
+                enum is not None
+                and isinstance(name, str)
+                and name.lower() not in enum
+                and (args.get("area") or args.get("floor"))
+            ):
+                _LOGGER.debug(
+                    "Dropping off-enum name %r from %s (area/floor present)",
+                    name,
+                    tool_name,
+                )
+                args = {k: v for k, v in args.items() if k != "name"}
+            scrubbed.append((tool_name, args))
+        return scrubbed
+
     def get_tool_calls(self, text: str, language: str = "en") -> MODEL_RESPONSE:
         assert self.llm, "Not loaded"
 
@@ -233,6 +296,7 @@ class Gemma4Recognizer:
                 top_k=self.top_k,
                 max_tokens=self.max_tokens,
                 tool_choice=self.tool_choice,  # type: ignore
+                grammar=self._grammar,
             ),
         )
         end_time = time.monotonic()
@@ -240,7 +304,10 @@ class Gemma4Recognizer:
 
         message = response["choices"][0]["message"]
         content = message.get("content") or ""
-        model_response = (_extract_tool_calls(message), content)
+        model_response = (
+            self._scrub_off_enum_names(_extract_tool_calls(message)),
+            content,
+        )
         if self.cache is not None:
             _LOGGER.debug("Caching '%s' -> %s", cache_key, model_response)
             self.cache.set(cache_key, model_response)
@@ -268,6 +335,7 @@ class Gemma4Recognizer:
             "chat_format": self.chat_format,
             "flash_attn": self.flash_attn,
             "prompt_lookup": self.prompt_lookup,
+            "grammar": self.use_grammar,
             "draft_model": draft_model,
         }
 
@@ -290,6 +358,18 @@ class Gemma4Recognizer:
         assert self.llm, "Not loaded"
         passes = max(1, passes)
         sorted_tools = sorted(tools, key=lambda t: t["function"]["name"])
+
+        # The fixture may override the loaded tools, so build a matching
+        # grammar rather than reusing the one from load().
+        run_grammar = None
+        if self.use_grammar:
+            from llama_cpp import LlamaGrammar
+
+            from tool_grammar import build_gbnf
+
+            run_grammar = LlamaGrammar.from_string(
+                build_gbnf(sorted_tools), verbose=False
+            )
 
         # Snapshot live state so benchmarking never disturbs the running assistant.
         # Some configs (e.g. prompt-lookup speculative decoding) have state that
@@ -358,6 +438,7 @@ class Gemma4Recognizer:
                             top_k=self.top_k,
                             max_tokens=self.max_tokens,
                             tool_choice=self.tool_choice,  # type: ignore
+                            grammar=run_grammar,
                         ),
                     )
                     latency = time.monotonic() - start_time
@@ -373,7 +454,9 @@ class Gemma4Recognizer:
                         }
                     )
 
-                tool_calls = _extract_tool_calls(message)
+                tool_calls = self._scrub_off_enum_names(
+                    _extract_tool_calls(message)
+                )
                 results.append(
                     {
                         "text": text,

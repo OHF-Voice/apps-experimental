@@ -361,6 +361,23 @@ def load_metadata(path: Union[str, Path]) -> Dict[str, Any]:
         return YAML(typ="safe").load(metadata_file) or {}
 
 
+def needs_context_area(
+    metadata: Dict[str, Any], intent_name: str, filled_slots: Set[str]
+) -> bool:
+    """True when the matched slot combination requires the voice satellite's
+    area (``context_area: true``) -- i.e. some combination of this intent is
+    marked context_area and its slots are exactly the ones the model filled
+    (e.g. "turn on the lights" -> domain only -> the satellite's area).
+    """
+    info = metadata.get(intent_name) or {}
+    for comb in (info.get("slot_combinations") or {}).values():
+        if not comb.get("context_area"):
+            continue
+        if set(comb.get("slots") or []) == filled_slots:
+            return True
+    return False
+
+
 def unknown_tool_names(
     tools: List[Dict[str, Any]], metadata: Dict[str, Any]
 ) -> List[str]:

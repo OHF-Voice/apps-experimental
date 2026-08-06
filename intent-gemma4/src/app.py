@@ -101,6 +101,12 @@ async def main() -> None:
         "left here for future llama.cpp versions. Leave at 0.",
     )
     parser.add_argument(
+        "--grammar",
+        action="store_true",
+        help="Constrain decoding with a GBNF grammar built from the tools: "
+        "only valid tool calls (or a free-text refusal) can be generated",
+    )
+    parser.add_argument(
         "--chat-format",
         default=None,
         help="llama-cpp-python chat handler (default: auto). Leave unset for "
@@ -139,6 +145,7 @@ async def main() -> None:
         chat_format=args.chat_format,
         flash_attn=args.flash_attn,
         prompt_lookup=args.prompt_lookup,
+        grammar=args.grammar,
         debug=args.debug,
     )
 

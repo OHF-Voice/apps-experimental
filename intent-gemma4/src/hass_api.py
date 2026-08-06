@@ -18,6 +18,15 @@ class HomeAssistantError(Exception):
 
 
 @dataclass
+class SatelliteInfo:
+    """Registry info for the voice satellite a command came from."""
+
+    entity_id: Optional[str] = None
+    device_id: Optional[str] = None
+    area_id: Optional[str] = None
+
+
+@dataclass
 class HomeInfo:
     """Snapshot of Home Assistant used to generate the tool set.
 
@@ -101,6 +110,69 @@ class HomeAssistant:
             )
         )
 
+    async def _authenticate(self, websocket) -> None:
+        msg = await websocket.receive_json()
+        assert msg["type"] == "auth_required", msg
+        await websocket.send_json({"type": "auth", "access_token": self.token})
+        msg = await websocket.receive_json()
+        assert msg["type"] == "auth_ok", msg
+
+    async def get_satellite_info(
+        self,
+        device_id: Optional[str] = None,
+        satellite_id: Optional[str] = None,
+    ) -> SatelliteInfo:
+        """Resolve the area of the voice satellite a command came from.
+
+        The satellite entity's own area wins; otherwise the area of its (or
+        the given) device is used.
+        """
+        info = SatelliteInfo(entity_id=satellite_id, device_id=device_id)
+        if (info.entity_id is None) and (info.device_id is None):
+            return info
+
+        current_id = 0
+
+        def next_id() -> int:
+            nonlocal current_id
+            current_id += 1
+            return current_id
+
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                self.websocket_api_url, max_msg_size=0
+            ) as websocket:
+                await self._authenticate(websocket)
+
+                if info.entity_id:
+                    await websocket.send_json(
+                        {
+                            "id": next_id(),
+                            "type": "config/entity_registry/get_entries",
+                            "entity_ids": [info.entity_id],
+                        }
+                    )
+                    msg = await websocket.receive_json()
+                    assert msg["success"], msg
+                    entry = (msg["result"] or {}).get(info.entity_id) or {}
+                    if entry.get("area_id"):
+                        info.area_id = entry["area_id"]
+                        return info
+                    info.device_id = entry.get("device_id") or info.device_id
+
+                if info.device_id:
+                    await websocket.send_json(
+                        {"id": next_id(), "type": "config/device_registry/list"}
+                    )
+                    msg = await websocket.receive_json()
+                    assert msg["success"], msg
+                    for device in msg["result"]:
+                        if device["id"] == info.device_id:
+                            info.area_id = device.get("area_id")
+                            break
+
+        return info
+
     async def get_home_info(self) -> HomeInfo:
         """Fetch exposed entities (with aliases) plus all areas and floors."""
         current_id = 0
@@ -118,14 +190,7 @@ class HomeAssistant:
             async with session.ws_connect(
                 self.websocket_api_url, max_msg_size=0
             ) as websocket:
-                # Authenticate
-                msg = await websocket.receive_json()
-                assert msg["type"] == "auth_required", msg
-                await websocket.send_json(
-                    {"type": "auth", "access_token": self.token}
-                )
-                msg = await websocket.receive_json()
-                assert msg["type"] == "auth_ok", msg
+                await self._authenticate(websocket)
 
                 # Exposed (to conversation) entities
                 await websocket.send_json(

@@ -120,6 +120,7 @@ def main() -> None:
                 chat_format=config.get("chat_format"),
                 flash_attn=config.get("flash_attn", False),
                 prompt_lookup=config.get("prompt_lookup", 0),
+                grammar=config.get("grammar", False),
                 debug=args.debug,
             )
             home_domains = config.get("home_domains")

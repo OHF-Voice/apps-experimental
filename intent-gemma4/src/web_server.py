@@ -17,7 +17,7 @@ import benchmark
 from benchmark import Fixture
 from const import BASE_DIR, AppState
 from intent_mapping import tool_to_intent
-from intent_tools import build_tools, unknown_tool_names
+from intent_tools import build_tools, needs_context_area, unknown_tool_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,6 +79,7 @@ def make_web_server(
             areas = sorted(
                 (
                     {
+                        "id": a.area_id,
                         "name": a.name,
                         "aliases": a.aliases or [],
                         "floor": floor_name(a.floor_id),
@@ -114,12 +115,18 @@ def make_web_server(
 
     @flask_app.route("/test", methods=["POST"])
     def test():
-        """Recognize one sentence and report the mapped intent(s)."""
+        """Recognize one sentence and report the mapped intent(s).
+
+        ``area_id`` simulates the voice satellite's area: like the Wyoming
+        handler, it is injected into the ``area`` slot when the matched slot
+        combination is marked ``context_area``.
+        """
         body = request.get_json(silent=True) or {}
         text = str(body.get("text") or "").strip()
         if not text:
             return jsonify({"ok": False, "error": "No text given"}), 400
         language = str(body.get("language") or "").strip() or "en"
+        area_id = str(body.get("area_id") or "").strip() or None
 
         if state.recognizer.llm is None:
             return (
@@ -138,12 +145,24 @@ def make_web_server(
         intents = []
         for tool_name, tool_args in tool_calls:
             intent_name, slots = tool_to_intent(tool_name, tool_args)
+            # Copy before mutating: the args dict may be shared with the
+            # recognizer's response cache.
+            slots = dict(slots)
+            context_area_applied = False
+            if (
+                area_id
+                and "area" not in slots
+                and needs_context_area(state.metadata, intent_name, set(slots))
+            ):
+                slots["area"] = area_id
+                context_area_applied = True
             info = state.metadata.get(intent_name) or {}
             intents.append(
                 {
                     "name": intent_name,
                     "description": info.get("description", ""),
                     "slots": slots,
+                    "context_area_applied": context_area_applied,
                     "tool": tool_name,
                     "tool_args": tool_args,
                 }

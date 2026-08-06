@@ -11,6 +11,7 @@ from wyoming.server import AsyncEventHandler
 
 from const import AppState, __version__
 from intent_mapping import tool_to_intent
+from intent_tools import needs_context_area
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +59,19 @@ class IntentEventHandler(AsyncEventHandler):
 
         language = transcript.language or "en"
 
+        # Resolve the satellite's area concurrently with recognition; it is
+        # needed when the matched slot combination is context_area (e.g.
+        # "turn on the lights" targets the area the command came from).
+        context = transcript.context or {}
+        satellite_task: Optional[asyncio.Task] = None
+        if self.state.hass is not None:
+            device_id = context.get("device_id")
+            satellite_id = context.get("satellite_id")
+            if device_id or satellite_id:
+                satellite_task = asyncio.create_task(
+                    self.state.hass.get_satellite_info(device_id, satellite_id)
+                )
+
         # Serialize on the single model worker (the model is not thread-safe and
         # is shared with the benchmark endpoint).
         loop = asyncio.get_running_loop()
@@ -75,6 +89,32 @@ class IntentEventHandler(AsyncEventHandler):
             # TODO: multiple tool calls
             tool_name, tool_args = tool_calls[0]
             intent_name, intent_slots = tool_to_intent(tool_name, tool_args)
+            # Copy before mutating: the args dict may be shared with the
+            # recognizer's response cache.
+            intent_slots = dict(intent_slots)
+
+        if intent_name and (satellite_task is not None):
+            satellite_info = None
+            try:
+                satellite_info = await satellite_task
+            except Exception:
+                _LOGGER.exception("Failed to get satellite info")
+            if (
+                satellite_info is not None
+                and satellite_info.area_id
+                and "area" not in intent_slots
+                and needs_context_area(
+                    self.state.metadata, intent_name, set(intent_slots)
+                )
+            ):
+                _LOGGER.debug(
+                    "Using satellite area for %s: %s",
+                    intent_name,
+                    satellite_info.area_id,
+                )
+                intent_slots["area"] = satellite_info.area_id
+        elif satellite_task is not None:
+            satellite_task.cancel()
 
         if not intent_name:
             await self.write_event(

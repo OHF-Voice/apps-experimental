@@ -196,7 +196,11 @@ def _summarize(entries: List[Dict[str, Any]]) -> None:
 
 
 def _run(
-    fixture_path: Path, n_threads: int, passes: int, json_path: Optional[Path] = None
+    fixture_path: Path,
+    n_threads: int,
+    passes: int,
+    json_path: Optional[Path] = None,
+    grammar: bool = False,
 ) -> None:
     """Load the model against the FULL tool set and report coverage per intent.
 
@@ -214,6 +218,7 @@ def _run(
     rec = Gemma4Recognizer(
         state_path=str(BASE_DIR.parent / "local" / "coverage_state.bin"),
         n_threads=n_threads or None,
+        grammar=grammar,
     )
     rec.load(tools, build_prefix=False)
     result = benchmark.run(rec, fixture, passes=passes)
@@ -272,6 +277,11 @@ def main() -> None:
         help="With --run, also write the full benchmark results to this JSON file "
         "(so accuracy can be diffed across tool-set changes)",
     )
+    parser.add_argument(
+        "--grammar",
+        action="store_true",
+        help="With --run, constrain decoding with the tools GBNF grammar",
+    )
     args = parser.parse_args()
 
     metadata = load_metadata(args.intents)
@@ -287,6 +297,7 @@ def main() -> None:
             args.n_threads,
             args.passes,
             json_path=Path(args.json) if args.json else None,
+            grammar=args.grammar,
         )
 
 

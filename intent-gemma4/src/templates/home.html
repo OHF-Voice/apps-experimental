@@ -80,6 +80,14 @@
       text-align: center;
     }
 
+    #test-area {
+      font-size: 1rem;
+      padding: 0.5rem 0.4rem;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      max-width: 12rem;
+    }
+
     button {
       padding: 0.5rem 1rem;
       font-size: 1rem;
@@ -161,6 +169,14 @@
       <div class="test-controls">
         <input id="sentence" type="text" placeholder="Type a sentence, e.g. turn on the kitchen lights"
                autocomplete="off" autofocus>
+        {% if areas %}
+        <select id="test-area" title="Current area: simulates which area the voice satellite is in">
+          <option value="">(no area)</option>
+          {% for area in areas %}
+          <option value="{{ area.id }}">{{ area.name }}</option>
+          {% endfor %}
+        </select>
+        {% endif %}
         <input id="language" type="text" value="en" title="Language code">
         <button id="test-btn">Test</button>
       </div>
@@ -251,7 +267,10 @@
         if (slots.length) {
           html += "<table class='slots-table'><thead><tr><th>Slot</th><th>Value</th></tr></thead><tbody>" +
             slots.map(([k, v]) =>
-              "<tr><td>" + esc(k) + "</td><td><code>" + esc(JSON.stringify(v)) + "</code></td></tr>"
+              "<tr><td>" + esc(k) +
+              (k === "area" && intent.context_area_applied
+                ? " <span class='muted'>(current area)</span>" : "") +
+              "</td><td><code>" + esc(JSON.stringify(v)) + "</code></td></tr>"
             ).join("") + "</tbody></table>";
         } else {
           html += "<div class='muted'>No slots.</div>";
@@ -269,10 +288,15 @@
       testBtn.disabled = true;
       resultEl.innerHTML = "<span class='muted'>Recognizing&hellip;</span>";
       try {
+        const areaEl = document.getElementById("test-area");
         const resp = await fetch("{{ url_for('test') }}", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({text, language: languageEl.value.trim() || "en"})
+          body: JSON.stringify({
+            text,
+            language: languageEl.value.trim() || "en",
+            area_id: areaEl ? areaEl.value : ""
+          })
         });
         const data = await resp.json();
         if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
