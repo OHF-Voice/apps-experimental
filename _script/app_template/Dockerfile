@@ -1,6 +1,4 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
-ARG BUILD_ARCH
+FROM ghcr.io/home-assistant/base-debian:bookworm
 
 # Set shell
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
