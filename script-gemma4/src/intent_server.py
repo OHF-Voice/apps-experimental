@@ -12,6 +12,7 @@ from wyoming.server import AsyncEventHandler
 
 from const import AppState
 from hass_api import SatelliteInfo
+from tool_mapping import map_tool_call
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,44 +82,62 @@ class Gemma4EventHandler(AsyncEventHandler):
                 if satellite_info_task:
                     satellite_info = await satellite_info_task
 
+                ran_script = False
                 for tool_id, tool_args in tool_calls:
-                    tool = self.state.tools[tool_id]
-                    script_id = f"script.{tool_id}"
-                    variables: Dict[str, Any] = {}
+                    # Only tools in the targeted set may run: the model can emit
+                    # a name that is not a tool at all, and (once scripts can be
+                    # enabled individually) one that is a script we must not run.
+                    tool = self.state.tools.get(tool_id)
+                    if tool is None:
+                        _LOGGER.warning("Ignoring unknown tool: %s", tool_id)
+                        continue
 
-                    # Map names to ids
-                    for var_key, var_value in tool_args.items():
-                        name_map = tool.name_map.get(var_key)
-                        if name_map is None:
-                            # No mapping
-                            variables[var_key] = var_value
-                            continue
+                    call = map_tool_call(tool, tool_args)
+                    if call.unresolved:
+                        _LOGGER.warning(
+                            "Dropping unresolvable field(s) of %s: %s",
+                            call.script_id,
+                            call.unresolved,
+                        )
 
-                        var_mapped_value = name_map.get(var_value)
-                        if var_mapped_value is not None:
-                            _LOGGER.debug(
-                                "Mapping '%s' -> '%s'", var_value, var_mapped_value
-                            )
-                            var_value = var_mapped_value
+                    if not call.can_run:
+                        _LOGGER.warning(
+                            "Not running %s: required field(s) %s could not be "
+                            "resolved to anything in this home",
+                            call.script_id,
+                            call.missing_required,
+                        )
+                        continue
 
-                        variables[var_key] = var_mapped_value
-
+                    variables: Dict[str, Any] = dict(call.variables)
                     if satellite_info:
                         satellite_info_dict = satellite_info.as_dict()
                         satellite_info_dict["language"] = language
                         variables["satellite"] = satellite_info_dict
 
                     _LOGGER.debug(
-                        "Calling script %s with variables %s", script_id, variables
+                        "Calling script %s with variables %s",
+                        call.script_id,
+                        variables,
                     )
+                    ran_script = True
                     asyncio.create_task(
                         self.state.hass.call_service(
                             "script",
                             "turn_on",
                             service_data={"variables": variables},
-                            target={"entity_id": script_id},
+                            target={"entity_id": call.script_id},
                         )
                     )
+
+                if not ran_script:
+                    # Every call was unknown or unresolvable, so nothing ran.
+                    await self.write_event(
+                        NotHandled(
+                            text=response_text, context=transcript.context
+                        ).event()
+                    )
+                    return True
 
                 await self.write_event(
                     Handled(text="", context=transcript.context).event()
