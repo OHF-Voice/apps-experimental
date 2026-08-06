@@ -1,0 +1,6 @@
+__pycache__/
+
+/local/
+
+# Local dev script (contains a Home Assistant token).
+run.sh
