@@ -101,25 +101,24 @@ async def main() -> None:
     hass = HomeAssistant(token=args.hass_token, api_url=args.hass_api)
     hass_info = await hass.get_home_info()
 
-    all_tools = await hass.get_script_tools(hass_info)
-
-    # Home Assistant's voice exposure is the default; the overrides file records
-    # the deliberate exceptions. Scripts that are not targeted are still kept for
-    # the web UI, which shows what targeting they would get.
+    # Home Assistant's voice exposure and names are the defaults; the overrides
+    # file records the deliberate exceptions. Names are applied while the tools
+    # are built, so load them first.
     overrides_path = Path(args.overrides) if args.overrides else None
-    script_overrides = overrides.load(overrides_path)
-    if all_tools:
-        # Only prune against a script list we actually got: an empty list means
-        # something is wrong with Home Assistant, not that every script is gone.
-        dropped = script_overrides.prune({tool.name for tool in all_tools})
-        if dropped:
-            _LOGGER.info(
-                "Forgetting override(s) for deleted script(s): %s", sorted(dropped)
-            )
-            if overrides_path is not None:
-                overrides.save(overrides_path, script_overrides)
+    all_overrides = overrides.load(overrides_path)
 
-    script_tools = script_overrides.select(all_tools)
+    all_tools = await hass.get_script_tools(hass_info, all_overrides.names)
+
+    # Scripts that are not targeted are still kept for the web UI, which shows
+    # what targeting they would get.
+    if all_tools:
+        # Only prune against a list we actually got: an empty list means
+        # something is wrong with Home Assistant, not that everything is gone.
+        if overrides.prune_all(all_overrides, all_tools, hass_info):
+            if overrides_path is not None:
+                overrides.save(overrides_path, all_overrides)
+
+    script_tools = all_overrides.scripts.select(all_tools)
     _LOGGER.debug(
         "Loaded %s script(s), %s targeted (%s exposed to voice)",
         len(all_tools),
@@ -158,9 +157,14 @@ async def main() -> None:
         recognizer=recognizer,
         llama_executor=llama_executor,
         all_tools=all_tools,
-        overrides=script_overrides,
+        overrides=all_overrides,
         overrides_path=overrides_path,
     )
+    state.set_home_info(hass_info)
+
+    # The web thread schedules Home Assistant reads on this loop.
+    loop = asyncio.get_running_loop()
+    state.loop = loop
 
     # Start the web UI before the model loads: the first boot can spend many
     # minutes downloading the model and building the cached state, and the UI
@@ -173,7 +177,6 @@ async def main() -> None:
 
     # Load on the model worker thread so all model access stays on one thread
     # (a benchmark request arriving during load queues behind it).
-    loop = asyncio.get_running_loop()
     tools_list = [t.tool for t in script_tools]
     await loop.run_in_executor(llama_executor, recognizer.load, tools_list)
 

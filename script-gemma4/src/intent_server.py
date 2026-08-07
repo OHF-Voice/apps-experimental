@@ -92,12 +92,22 @@ class Gemma4EventHandler(AsyncEventHandler):
                         _LOGGER.warning("Ignoring unknown tool: %s", tool_id)
                         continue
 
-                    call = map_tool_call(tool, tool_args)
+                    # The satellite's area is how a name shared by several
+                    # things ("Media Player" in three rooms) gets narrowed down.
+                    call = map_tool_call(
+                        tool, tool_args, satellite_info, self.state.geometry
+                    )
                     if call.unresolved:
                         _LOGGER.warning(
                             "Dropping unresolvable field(s) of %s: %s",
                             call.script_id,
                             call.unresolved,
+                        )
+                    if call.ambiguous:
+                        _LOGGER.warning(
+                            "Dropping ambiguous field(s) of %s: %s",
+                            call.script_id,
+                            call.ambiguous,
                         )
 
                     if not call.can_run:

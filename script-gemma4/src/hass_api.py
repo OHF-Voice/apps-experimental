@@ -4,12 +4,13 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 
 from models import ATTR_FRIENDLY_NAME, Area, Entity, Floor, State
+from overrides import AREA, ENTITY, FLOOR, NameOverrides
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,9 +63,17 @@ class SatelliteInfo:
 class Tool:
     name: str
     tool: Dict[str, Any]
-    name_map: Dict[str, Dict[str, str]] = field(
+    # Field -> display name -> the Home Assistant ids that name refers to.
+    # More than one id means the name is ambiguous; the resolver picks.
+    name_map: Dict[str, Dict[str, List[str]]] = field(
         default_factory=lambda: defaultdict(dict)
     )
+    # Field -> what its names refer to ("entity", "area", or "floor").
+    field_kinds: Dict[str, str] = field(default_factory=dict)
+    # Field -> every id it could refer to, whatever the names currently are.
+    # This is what the per-field name editor lists, so a target whose names were
+    # cleared can still be found and given some back.
+    field_targets: Dict[str, List[str]] = field(default_factory=dict)
     # Script name and description as shown in Home Assistant (the model-facing
     # copy lives in ``tool``, where a missing description falls back to the name).
     friendly_name: str = ""
@@ -362,34 +371,58 @@ class HomeAssistant:
 
         return paths
 
-    async def get_script_tools(self, info: HomeAssistantInfo) -> List[Tool]:
+    async def get_script_tools(
+        self,
+        info: HomeAssistantInfo,
+        name_overrides: Optional[NameOverrides] = None,
+    ) -> List[Tool]:
         """Build one tool per Home Assistant script.
 
         Every script gets a tool so the web UI can show what targeting it would
         get; ``Tool.exposed`` says whether it is exposed to voice. Only exposed
         tools are given to the model.
+
+        ``name_overrides`` replaces the names of individual entities, areas, and
+        floors, so the enums can use what people actually say rather than only
+        what Home Assistant calls things.
         """
         tools: List[Tool] = []
         now = datetime.now()
+        names = name_overrides or NameOverrides()
 
-        # Area/floor names
-        area_name_map = {}
-        area_names = set()
-        for area in info.areas.values():
-            for area_name in area.names:
-                if area_name:
-                    area_names.add(area_name)
-                    area_name_map[area_name] = area.area_id
-        area_names_sorted = sorted(area_names)
+        # Every area and floor, with the names Home Assistant gives it.
+        area_targets = [
+            (area.area_id, list(area.names)) for area in info.areas.values()
+        ]
+        floor_targets = [
+            (floor.floor_id, list(floor.names)) for floor in info.floors.values()
+        ]
 
-        floor_name_map = {}
-        floor_names = set()
-        for floor in info.floors.values():
-            for floor_name in floor.names:
-                if floor_name:
-                    floor_names.add(floor_name)
-                    floor_name_map[floor_name] = floor.floor_id
-        floor_names_sorted = sorted(floor_names)
+        def build_name_map(
+            kind: str,
+            targets: List[Tuple[str, List[str]]],
+            script_id: Optional[str] = None,
+            field_key: Optional[str] = None,
+        ) -> Dict[str, List[str]]:
+            """Display name -> the ids it refers to.
+
+            A name can belong to more than one thing (two areas called "Office",
+            several media players all called "Media Player"), so every candidate
+            is kept and the resolver picks between them.
+            """
+            name_map: Dict[str, List[str]] = defaultdict(list)
+            for target_id, default_names in targets:
+                for target_name in names.names_for(
+                    kind, target_id, default_names, script_id, field_key
+                ):
+                    name_map[target_name].append(target_id)
+
+            return dict(name_map)
+
+        # Shared maps for fields with no per-script override, which is most of
+        # them: rebuilding these per field would be wasted work.
+        area_name_map = build_name_map(AREA, area_targets)
+        floor_name_map = build_name_map(FLOOR, floor_targets)
 
         # ---
         current_id = 0
@@ -596,14 +629,37 @@ class HomeAssistant:
                                 field_prop["minimum"] = 2000
                                 field_prop["maximum"] = 6500
                                 field_description += "\nColor temperature in kelvin, e.g. 2700 for warm white or 6500 for cool daylight."
-                            elif ("area" in selector) and area_names_sorted:
-                                field_prop["enum"] = area_names_sorted
-                                tool.name_map[field_key] = area_name_map
-                            elif ("floor" in selector) and floor_names_sorted:
-                                field_prop["enum"] = floor_names_sorted
-                                tool.name_map[field_key] = floor_name_map
+                            elif ("area" in selector) and area_targets:
+                                scoped = names.has_field_names(script_id, field_key)
+                                field_map = (
+                                    build_name_map(
+                                        AREA, area_targets, script_id, field_key
+                                    )
+                                    if scoped
+                                    else area_name_map
+                                )
+                                field_prop["enum"] = sorted(field_map)
+                                tool.name_map[field_key] = dict(field_map)
+                                tool.field_kinds[field_key] = AREA
+                                tool.field_targets[field_key] = [
+                                    target_id for target_id, _ in area_targets
+                                ]
+                            elif ("floor" in selector) and floor_targets:
+                                scoped = names.has_field_names(script_id, field_key)
+                                field_map = (
+                                    build_name_map(
+                                        FLOOR, floor_targets, script_id, field_key
+                                    )
+                                    if scoped
+                                    else floor_name_map
+                                )
+                                field_prop["enum"] = sorted(field_map)
+                                tool.name_map[field_key] = dict(field_map)
+                                tool.field_kinds[field_key] = FLOOR
+                                tool.field_targets[field_key] = [
+                                    target_id for target_id, _ in floor_targets
+                                ]
                             elif ("entity" in selector) and info.entities:
-                                entity_names = set()
                                 entity_filters = selector["entity"].get("filter", [])
                                 filter_domains: Optional[Set[str]] = None
                                 if entity_filters:
@@ -613,23 +669,21 @@ class HomeAssistant:
                                     elif filter_domains is not None:
                                         filter_domains = set(filter_domains)
 
-                                entity_name_map = {}
-                                for entity in info.entities.values():
-                                    if filter_domains and (
-                                        entity.domain not in filter_domains
-                                    ):
-                                        continue
-
-                                    for entity_name in entity.names:
-                                        if entity_name:
-                                            entity_names.add(entity_name)
-                                            entity_name_map[entity_name] = (
-                                                entity.entity_id
-                                            )
-
-                                entity_names_sorted = sorted(entity_names)
-                                field_prop["enum"] = entity_names_sorted
-                                tool.name_map[field_key] = entity_name_map
+                                entity_targets = [
+                                    (entity.entity_id, list(entity.names))
+                                    for entity in info.entities.values()
+                                    if (not filter_domains)
+                                    or (entity.domain in filter_domains)
+                                ]
+                                field_map = build_name_map(
+                                    ENTITY, entity_targets, script_id, field_key
+                                )
+                                field_prop["enum"] = sorted(field_map)
+                                tool.name_map[field_key] = dict(field_map)
+                                tool.field_kinds[field_key] = ENTITY
+                                tool.field_targets[field_key] = [
+                                    target_id for target_id, _ in entity_targets
+                                ]
 
                         if field_description:
                             field_prop["description"] = field_description.strip()

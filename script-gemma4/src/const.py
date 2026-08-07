@@ -1,3 +1,4 @@
+import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -5,7 +6,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from hass_api import HomeAssistant, HomeAssistantInfo, Tool
-from overrides import ScriptOverrides
+from overrides import Overrides
+from tool_mapping import HomeGeometry
 
 BASE_DIR = Path(__file__).parent
 
@@ -26,12 +28,21 @@ class AppState:
     llama_executor: ThreadPoolExecutor
     # Every script in Home Assistant, targeted or not, for the web UI to show.
     all_tools: List[Tool] = field(default_factory=list)
-    # Deliberate exceptions to Home Assistant's voice exposure, and where they
-    # are persisted (None when no path was configured).
-    overrides: ScriptOverrides = field(default_factory=ScriptOverrides)
+    # Local corrections to exposure and names, and where they are persisted
+    # (None when no path was configured).
+    overrides: Overrides = field(default_factory=Overrides)
     overrides_path: Optional[Path] = None
     # Held while the tool set is being swapped, so two applies cannot overlap.
     reload_lock: threading.Lock = field(default_factory=threading.Lock)
+    # The app's event loop, so the web thread can re-read Home Assistant.
+    loop: Optional[asyncio.AbstractEventLoop] = None
+    # Where things are, for picking between things that share a name.
+    geometry: HomeGeometry = field(default_factory=HomeGeometry)
+
+    def set_home_info(self, info: HomeAssistantInfo) -> None:
+        """Adopt a new Home Assistant snapshot."""
+        self.hass_info = info
+        self.geometry = HomeGeometry.from_info(info)
 
     def set_targeted(self, tools: List[Tool]) -> None:
         """Replace the set of tools the model may call."""

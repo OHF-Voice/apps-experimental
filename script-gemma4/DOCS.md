@@ -233,7 +233,97 @@ scripts:
 
 Only the exceptions are stored, never the resulting list, so exposing a new
 script in Home Assistant is picked up without touching this file. Entries naming
-scripts that no longer exist are dropped automatically on the next start.
+scripts that no longer exist are dropped automatically.
+
+### Reloading from Home Assistant
+
+Home Assistant is read once, when the app starts. **Reload from Home Assistant**
+on the Scripts page re-reads it and rebuilds the tools, which is how you pick up
+a newly exposed script, a renamed entity, or a new alias without restarting.
+Like applying any change, it rebuilds the model prefix.
+
+## Names
+
+Enum values come from Home Assistant's names and aliases. Those are not always
+what someone says out loud, and they sometimes include entities whose names only
+confuse the model — several entities can even share one name, in which case the
+model has no way to pick between them.
+
+The **Names** page lists every entity exposed to Assist, plus every area and
+floor, with the names the model may use for each. Edit the comma-separated list
+to change them:
+
+- **Add a name** for something people say a different way ("office light" beside
+  "Overhead light").
+- **Rename** to disambiguate. If three media players are all called "Media
+  Player", the model cannot target any of them reliably; give them distinct
+  names.
+- **Clear the box** to keep something out of the enums entirely, so the model can
+  never target it. Good for entities that exist but should not be voice targets,
+  and for noise like "Built-in Audio Analog Stereo".
+- **Reset** goes back to Home Assistant's own names.
+
+### Names shared by more than one thing
+
+Several things can end up with the same name — a "Media Player" in three
+bedrooms, or two speakers in one room. The model only ever says the name, so
+something has to pick.
+
+The **area of the voice satellite that heard the command** is used first: a
+candidate in that area wins, then one on that floor. That resolves the common
+case, where the duplicates are in different rooms, without any configuration —
+asking the bedroom satellite for "the media player" gets the bedroom one.
+
+When that does not settle it (nothing in that area, no area known, or the
+duplicates are in the *same* area) the field is dropped rather than guessed:
+acting on whichever one happened to be listed first is worse than not acting.
+If the field was required the script does not run, and the tester says which
+candidates it was torn between. Giving them distinct names here always fixes it.
+
+The Scripts page marks fields whose names are shared, so you can find them
+before a command fails.
+
+Nothing in Home Assistant is modified — this only changes what this app offers
+the model. If you want a name to work everywhere in Home Assistant, add it as an
+[alias][aliases] there instead and use *Reload from Home Assistant*.
+
+### Names for one script's field
+
+Sometimes a name only needs fixing for one script. The field list on the Scripts
+page has an **Override names for this field** link next to every field that takes
+names, which opens the same editor scoped to that field: it lists exactly that
+field's candidates, after its own domain filter, so the list you are looking at
+is the list that misbehaved.
+
+Names set there beat the ones on the Names page, for that field only. Everything
+else keeps using the global names. Clearing a box excludes that thing from *this*
+field while leaving it targetable by other scripts, which is the usual reason to
+reach for this: two speakers in one room can be told apart for the script that
+needs to, without renaming them everywhere.
+
+Names are stored in the same overrides file, keyed by Home Assistant id, and
+only where they differ from Home Assistant:
+
+```yaml
+names:
+  entity:
+    light.office_overhead_light: [Overhead light, office light]
+    media_player.built_in_audio_analog_stereo: []   # never offered to the model
+  area:
+    kitchen: [Kitchen, the cookhouse]
+  floor:
+    first_floor: [Downstairs]
+  per_script:
+    device_on_off:
+      device_name:
+        media_player.voice_media_player: [the test speaker]
+```
+
+Entries for entities, areas, floors, or scripts that no longer exist are dropped
+automatically, so deleting something in Home Assistant cleans up after itself.
+
+A name that no longer resolves is never passed to a script: see the tester's
+"would not run" case above.
 
 The raw tools given to the model (OpenAI function spec) are at `/tools.json`,
 for debugging.

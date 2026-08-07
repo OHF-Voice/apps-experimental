@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.6.0
+
+- Use the voice satellite's area to pick between things that share a name. Home
+  Assistant happily allows three media players all called "Media Player"; the
+  one in the area the command came from now wins, then the one on that floor.
+  Previously whichever entity happened to be built last silently won, making the
+  others unreachable
+- When that does not settle it, the field is dropped rather than guessed, and the
+  tester reports which candidates it was torn between. Fields whose names are
+  shared are flagged on the Scripts page
+- Names can now be overridden for a single script's field, from an "Override
+  names for this field" link next to that field. Useful when two things share a
+  name inside one area, where the satellite cannot help
+- The tester takes a "current area", so satellite-dependent behaviour can be
+  tried without a satellite
+
+## 1.5.0
+
+- Add a **Names** page: change what the model may call each entity, area, and
+  floor, independently of Home Assistant. Add a name people actually say, rename
+  to tell apart entities that share a name (the model cannot target any of them
+  reliably otherwise), or clear the names to keep something out of the enums
+  entirely. Home Assistant is not modified
+- Add **Reload from Home Assistant** to the Scripts page, so a newly exposed
+  script, a rename, or a new alias can be picked up without restarting
+- Name overrides are stored by Home Assistant id and only where they differ, and
+  entries for entities, areas, or floors that no longer exist are dropped
+
 ## 1.4.0
 
 - The web UI home page now lists every script in Home Assistant, split into the
