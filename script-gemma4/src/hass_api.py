@@ -59,6 +59,22 @@ class SatelliteInfo:
         return info_dict
 
 
+def _apply_satellite_registry_info(
+    satellite_info: SatelliteInfo,
+    satellite_dict: Dict[str, Any],
+    devices: Dict[str, Dict[str, Any]],
+) -> None:
+    """Fill location and device information from registry snapshots."""
+    satellite_info.area_id = satellite_dict.get("area_id")
+    satellite_info.device_id = (
+        satellite_dict.get("device_id") or satellite_info.device_id
+    )
+    if satellite_info.device_id and not satellite_info.area_id:
+        satellite_info.area_id = devices.get(satellite_info.device_id, {}).get(
+            "area_id"
+        )
+
+
 @dataclass
 class Tool:
     name: str
@@ -231,24 +247,14 @@ class HomeAssistant:
                     )
                     msg = await websocket.receive_json()
                     assert msg["success"], msg
-                    satellite_dict = next(iter(msg["result"].values()))
-                    satellite_area_id = satellite_dict.get("area_id")
-                    if satellite_area_id:
-                        return satellite_area_id
-
-                    # Use device area
-                    satellite_info.device_id = satellite_dict.get(
-                        "device_id", device_id
+                    satellite_dict: Dict[str, Any] = next(
+                        iter(msg["result"].values()), {}
                     )
-                    if satellite_info.device_id:
-                        satellite_info.area_id = devices.get(device_id, {}).get(
-                            "area_id"
-                        )
+                    _apply_satellite_registry_info(
+                        satellite_info, satellite_dict, devices
+                    )
 
                 if satellite_info.device_id:
-                    # Get area from device instead
-                    satellite_info.area_id = devices.get(device_id, {}).get("area_id")
-
                     # Look for media/music player on the same device
                     for mp_id, mp_info in media_players.items():
                         if mp_info.get("device_id") != satellite_info.device_id:

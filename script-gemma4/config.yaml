@@ -1,5 +1,5 @@
 ---
-version: 1.6.0
+version: 1.7.0
 slug: script-gemma4
 name: Gemma 4 Script Runner
 description: Run Home Assistant scripts by voice with Gemma 4
@@ -20,6 +20,7 @@ options:
   n_ctx_overhead: 128
   n_threads: 0
   max_tokens: 64
+  flash_attention: true
   debug_logging: false
 schema:
   hf_repo: str
@@ -30,6 +31,7 @@ schema:
   n_ctx_overhead: int
   n_threads: int
   max_tokens: int
+  flash_attention: bool
   debug_logging: bool
 ports:
   "10500/tcp": null

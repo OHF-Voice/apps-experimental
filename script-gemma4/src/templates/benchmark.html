@@ -75,7 +75,8 @@ function render(data) {
       s.num_tools + " tools</span></div>" +
     "<div class='muted'><b>Config:</b> " + esc(c.filename || "?") +
       " &middot; n_ctx=" + c.n_ctx + " &middot; n_threads=" + c.n_threads +
-      " &middot; max_tokens=" + c.max_tokens + " &middot; temp=" + c.temperature +
+      " &middot; max_tokens=" + c.max_tokens + " &middot; flash_attn=" + c.flash_attn +
+      " &middot; temp=" + c.temperature +
       " &middot; draft=" + (c.draft_model || "none") + "</div>" +
     "</div>";
 

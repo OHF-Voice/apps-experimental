@@ -1,11 +1,6 @@
 # Gemma 4 Script Runner
 
-A [conversation][] agent built with [Gemma 4][gemma4] that runs Home Assistant
-[scripts][] which have been [exposed][expose] to voice.
-
-This app is experimental: it only runs scripts you write for it (see the
-[blueprints][] for examples), and response times depend heavily on your
-hardware — see [Benchmarks](#benchmarks) below.
+A [conversation][] agent built with [Gemma 4][gemma4] that runs your custom Home Assistant [scripts][].
 
 ![architecture](https://raw.githubusercontent.com/OHF-Voice/apps-experimental/main/script-gemma4/res/architecture.png)
 
@@ -60,6 +55,10 @@ sending them to the LLM.
 - `max_tokens`: maximum tokens the model may generate per command (default:
   `64`). Raise this only if you expect many tool calls at once, since it also
   raises the automatic context size.
+- `flash_attention`: use llama.cpp flash attention (default: enabled). On a
+  Raspberry Pi 5 this reduced median recognition latency by about 3.6% in the
+  bundled benchmark. The CPU kernels are already part of llama.cpp, so this
+  does not add a separate compilation step.
 - `debug_logging`: enable verbose logging, including llama.cpp's own output.
 
 Changes to these options take effect on restart.
@@ -170,7 +169,9 @@ could run at a time!
 
 To keep the speed reasonable, the agent caches the LLM state on startup whenever
 the scripts or [exposed][expose] entities have changed. Rebuilding the cached
-state can take several minutes.
+state can take several minutes. The cache is also rebuilt after a model,
+llama.cpp, context-size, or flash-attention change. If the saved state is
+damaged or cannot be restored, the app rebuilds it automatically.
 
 ## Tool call caching
 
@@ -200,9 +201,10 @@ outcomes:
 - **The model made this name up** — it produced a tool name that is not an
   exposed script. Usually a sign the exposed scripts don't cover what you asked.
 
-Names that don't resolve are always dropped rather than passed to the script, so
-a script never receives a name it cannot act on. Optional fields simply go
-missing; required ones stop the script from running.
+Names and fields that don't resolve are always dropped rather than passed to the
+script, so a script never receives a value it cannot act on. Optional fields
+simply go missing; required fields that are missing, ambiguous, or unresolved
+stop the script from running.
 
 ### Choosing which scripts are targeted
 

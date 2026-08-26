@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-cd /usr/src
+cd /usr/src || exit 1
 
 export HF_HOME=/data/cache
 mkdir -p /data/state

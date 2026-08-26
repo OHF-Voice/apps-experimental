@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import logging
 import threading
@@ -13,7 +14,7 @@ import benchmark
 import overrides
 from benchmark import Fixture
 from const import AppState
-from hass_api import SatelliteInfo, Tool
+from hass_api import HomeAssistantInfo, SatelliteInfo, Tool
 from overrides import AREA, ENTITY, FLOOR, NAME_KINDS, NameOverrides, ScriptOverrides
 from tool_mapping import map_tool_call, required_fields
 
@@ -26,6 +27,65 @@ ENUM_SAMPLE = 5
 
 # Seconds to wait for Home Assistant when re-reading it.
 HASS_TIMEOUT = 60.0
+
+
+def _apply_candidate(
+    state: AppState,
+    hass_info: HomeAssistantInfo,
+    all_tools: List[Tool],
+    candidate_overrides: overrides.Overrides,
+) -> List[Tool]:
+    """Atomically swap the model and app state to a prepared snapshot."""
+    overrides.prune_all(candidate_overrides, all_tools, hass_info)
+    targeted = candidate_overrides.scripts.select(all_tools)
+
+    def reload_and_commit() -> None:
+        # This runs on the model worker. Committing here closes the small window
+        # where a queued recognition could use the new prefix but still map its
+        # result against the old Tool objects.
+        state.recognizer.reload([tool.tool for tool in targeted])
+        state.overrides = candidate_overrides
+        state.set_home_info(hass_info)
+        state.all_tools = all_tools
+        state.set_targeted(targeted)
+
+    future = state.llama_executor.submit(reload_and_commit)
+    future.result()
+    if state.overrides_path is not None:
+        overrides.save(state.overrides_path, state.overrides)
+
+    return targeted
+
+
+def _replacement_global_names(
+    current: NameOverrides,
+    changes: Dict[str, Any],
+    known: Dict[str, Set[str]],
+) -> NameOverrides:
+    """Build global name replacements without losing per-field exceptions."""
+    new_names = NameOverrides(per_script=copy.deepcopy(current.per_script))
+    for kind in NAME_KINDS:
+        kind_changes = changes.get(kind) or {}
+        if not isinstance(kind_changes, dict):
+            raise ValueError(f"Names for {kind} must be a mapping")
+
+        for target_id, target_names in kind_changes.items():
+            if target_id not in known[kind]:
+                # Ignore anything that is not a real target: a name has to
+                # resolve to a Home Assistant id to be usable.
+                _LOGGER.debug("Ignoring unknown %s: %s", kind, target_id)
+                continue
+
+            if not isinstance(target_names, list):
+                raise ValueError(f"Names for {target_id} must be a list")
+
+            new_names.set_names(
+                kind,
+                str(target_id),
+                [str(name).strip() for name in target_names if str(name).strip()],
+            )
+
+    return new_names
 
 
 def _describe_fields(tool: Tool, names: NameOverrides) -> List[Dict[str, Any]]:
@@ -129,18 +189,21 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
             areas=areas,
         )
 
-    def _refresh_from_hass() -> None:
-        """Re-read Home Assistant and rebuild every tool, in place.
+    def _fetch_from_hass(
+        candidate_overrides: overrides.Overrides,
+    ) -> tuple[HomeAssistantInfo, List[Tool]]:
+        """Re-read Home Assistant and build tools without changing live state.
 
         Runs the fetch on the app's event loop, since the web server is a
-        separate thread. Name overrides are applied while the tools are built.
+        separate thread. Candidate name overrides are applied while the tools
+        are built, but nothing is committed until the model accepts the prefix.
         """
         assert state.loop is not None, "No event loop"
 
         async def fetch():
             hass_info = await state.hass.get_home_info()
             all_tools = await state.hass.get_script_tools(
-                hass_info, state.overrides.names
+                hass_info, candidate_overrides.names
             )
             return hass_info, all_tools
 
@@ -153,21 +216,7 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
             # what we have rather than pruning against it.
             raise RuntimeError("Home Assistant returned no scripts")
 
-        state.set_home_info(hass_info)
-        state.all_tools = all_tools
-        if overrides.prune_all(state.overrides, all_tools, hass_info):
-            if state.overrides_path is not None:
-                overrides.save(state.overrides_path, state.overrides)
-
-    def _apply_targeted() -> List[Tool]:
-        """Swap the model onto the currently targeted tools."""
-        targeted = state.overrides.scripts.select(state.all_tools)
-        future = state.llama_executor.submit(
-            state.recognizer.reload, [tool.tool for tool in targeted]
-        )
-        future.result()
-        state.set_targeted(targeted)
-        return targeted
+        return hass_info, all_tools
 
     @flask_app.route("/reload", methods=["POST"])
     def reload_from_hass():
@@ -183,8 +232,11 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
             return jsonify({"error": "Already applying a change"}), 409
 
         try:
-            _refresh_from_hass()
-            targeted = _apply_targeted()
+            candidate_overrides = copy.deepcopy(state.overrides)
+            hass_info, all_tools = _fetch_from_hass(candidate_overrides)
+            targeted = _apply_candidate(
+                state, hass_info, all_tools, candidate_overrides
+            )
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.exception("Failed to reload from Home Assistant")
             return jsonify({"error": f"Could not reload: {err}"}), 500
@@ -250,7 +302,7 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
             return jsonify({"error": "Already applying a change"}), 409
 
         try:
-            new_overrides = ScriptOverrides(
+            new_script_overrides = ScriptOverrides(
                 enabled={
                     tool.name
                     for tool in state.all_tools
@@ -262,26 +314,24 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
                     if (tool.name not in names) and tool.exposed
                 },
             )
-            previous = state.overrides.scripts
-            state.overrides.scripts = new_overrides
             try:
-                # Swap on the model worker: it owns the model, and a queued
-                # recognition will wait rather than race the rebuild.
-                targeted = _apply_targeted()
+                candidate_overrides = copy.deepcopy(state.overrides)
+                candidate_overrides.scripts = new_script_overrides
+                targeted = _apply_candidate(
+                    state,
+                    state.hass_info,
+                    state.all_tools,
+                    candidate_overrides,
+                )
             except Exception as err:  # pylint: disable=broad-except
-                state.overrides.scripts = previous
                 _LOGGER.exception("Failed to apply script overrides")
                 return jsonify({"error": f"Could not apply: {err}"}), 500
-
-            # Only record the change once the model actually accepted it.
-            if state.overrides_path is not None:
-                overrides.save(state.overrides_path, state.overrides)
 
             return jsonify(
                 {
                     "num_targeted": len(targeted),
-                    "enabled": sorted(new_overrides.enabled),
-                    "disabled": sorted(new_overrides.disabled),
+                    "enabled": sorted(new_script_overrides.enabled),
+                    "disabled": sorted(new_script_overrides.disabled),
                     "n_ctx": (
                         state.recognizer.llm.n_ctx()
                         if state.recognizer.llm is not None
@@ -445,7 +495,7 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
 
         kind = tool.field_kinds[field_key]
         scoped = state.overrides.names.field_names(script_name, field_key)
-        rows = []
+        rows: List[Dict[str, Any]] = []
         for target_id in tool.field_targets.get(field_key, []):
             default_names = _default_names(kind, target_id)
             # What this target is called everywhere else, which is what an empty
@@ -470,7 +520,7 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
             script=script_name,
             field=field_key,
             kind=kind,
-            rows=sorted(rows, key=lambda r: r["id"]),
+            rows=sorted(rows, key=lambda r: str(r["id"])),
             can_save=state.overrides_path is not None,
         )
 
@@ -505,20 +555,16 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
         if not state.reload_lock.acquire(blocking=False):
             return jsonify({"error": "Already applying a change"}), 409
 
-        previous = dict(state.overrides.names.field_names(script_name, field_key))
         try:
-            state.overrides.names.set_field_names(script_name, field_key, scoped)
-            _refresh_from_hass()
-            _apply_targeted()
+            candidate_overrides = copy.deepcopy(state.overrides)
+            candidate_overrides.names.set_field_names(script_name, field_key, scoped)
+            hass_info, all_tools = _fetch_from_hass(candidate_overrides)
+            _apply_candidate(state, hass_info, all_tools, candidate_overrides)
         except Exception as err:  # pylint: disable=broad-except
-            state.overrides.names.set_field_names(script_name, field_key, previous)
             _LOGGER.exception("Failed to apply names for %s.%s", script_name, field_key)
             return jsonify({"error": f"Could not apply: {err}"}), 500
         finally:
             state.reload_lock.release()
-
-        if state.overrides_path is not None:
-            overrides.save(state.overrides_path, state.overrides)
 
         return jsonify({"num_overridden": len(scoped)})
 
@@ -544,44 +590,28 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
             FLOOR: set(info.floors),
         }
 
-        new_names = NameOverrides()
-        for kind in NAME_KINDS:
-            for target_id, target_names in (changes.get(kind) or {}).items():
-                if target_id not in known[kind]:
-                    # Ignore anything that is not a real target: a name has to
-                    # resolve to a Home Assistant id to be usable.
-                    _LOGGER.debug("Ignoring unknown %s: %s", kind, target_id)
-                    continue
-
-                if not isinstance(target_names, list):
-                    return (
-                        jsonify({"error": f"Names for {target_id} must be a list"}),
-                        400,
-                    )
-
-                new_names.set_names(
-                    kind,
-                    str(target_id),
-                    [str(name).strip() for name in target_names if str(name).strip()],
-                )
+        # Global edits must not erase the field-specific exceptions introduced
+        # in 1.6. They are independent layers of the naming configuration.
+        try:
+            new_names = _replacement_global_names(state.overrides.names, changes, known)
+        except ValueError as err:
+            return jsonify({"error": str(err)}), 400
 
         if not state.reload_lock.acquire(blocking=False):
             return jsonify({"error": "Already applying a change"}), 409
 
-        previous = state.overrides.names
         try:
-            state.overrides.names = new_names
-            _refresh_from_hass()
-            targeted = _apply_targeted()
+            candidate_overrides = copy.deepcopy(state.overrides)
+            candidate_overrides.names = new_names
+            hass_info, all_tools = _fetch_from_hass(candidate_overrides)
+            targeted = _apply_candidate(
+                state, hass_info, all_tools, candidate_overrides
+            )
         except Exception as err:  # pylint: disable=broad-except
-            state.overrides.names = previous
             _LOGGER.exception("Failed to apply name overrides")
             return jsonify({"error": f"Could not apply: {err}"}), 500
         finally:
             state.reload_lock.release()
-
-        if state.overrides_path is not None:
-            overrides.save(state.overrides_path, state.overrides)
 
         return jsonify(
             {

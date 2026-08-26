@@ -78,6 +78,12 @@ async def main() -> None:
         help="Maximum number of tokens the model can generate",
     )
     parser.add_argument(
+        "--flash-attention",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use llama.cpp flash attention (default: enabled)",
+    )
+    parser.add_argument(
         "--benchmark-fixture",
         default=None,
         help="Path to benchmark fixture YAML (default: bundled benchmark.yaml)",
@@ -144,6 +150,7 @@ async def main() -> None:
         n_ctx_overhead=args.n_ctx_overhead,
         n_threads=args.n_threads if args.n_threads > 0 else None,
         max_tokens=args.max_tokens,
+        flash_attn=args.flash_attention,
         debug=args.debug,
     )
 
@@ -195,15 +202,25 @@ async def main() -> None:
         loop.add_signal_handler(sig, request_stop)
 
     server_task = asyncio.create_task(server.run(partial(Gemma4EventHandler, state)))
+    stop_task = asyncio.create_task(stop_event.wait())
 
     try:
-        await stop_event.wait()
+        done, _ = await asyncio.wait(
+            (server_task, stop_task), return_when=asyncio.FIRST_COMPLETED
+        )
+        if server_task in done:
+            # Do not leave a healthy-looking web UI behind if Wyoming failed.
+            await server_task
     finally:
         _LOGGER.info("Shutting down")
 
+        stop_task.cancel()
         server_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
+            await stop_task
+        with contextlib.suppress(asyncio.CancelledError):
             await server_task
+        llama_executor.shutdown(wait=False, cancel_futures=True)
 
 
 # -----------------------------------------------------------------------------

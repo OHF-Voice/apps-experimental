@@ -36,6 +36,11 @@ configuration:
     name: Maximum tokens
     description: >-
       Maximum number of tokens the model is allowed to generate.
+  flash_attention:
+    name: Flash attention
+    description: >-
+      Use llama.cpp flash attention. Enabled by default for lower latency and a
+      faster model-prefix rebuild; it does not add a separate compilation step.
   debug_logging:
     name: Debug logging
     description: >-

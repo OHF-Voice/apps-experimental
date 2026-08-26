@@ -1,7 +1,8 @@
 import asyncio
+import contextlib
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from wyoming.asr import Transcript
 from wyoming.error import Error
@@ -10,11 +11,27 @@ from wyoming.handle import Handled, NotHandled
 from wyoming.info import Attribution, Describe, HandleModel, HandleProgram, Info
 from wyoming.server import AsyncEventHandler
 
-from const import AppState
+from const import APP_VERSION, AppState
 from hass_api import SatelliteInfo
 from tool_mapping import map_tool_call
 
 _LOGGER = logging.getLogger(__name__)
+
+# Satellite context is helpful for disambiguation, but must never hold a voice
+# command open indefinitely if Home Assistant's registry API stalls.
+SATELLITE_TIMEOUT = 10.0
+
+
+async def _wait_for_service_calls(service_calls: List[Any]) -> None:
+    """Wait until Home Assistant accepts at least one script call."""
+    results = await asyncio.gather(*service_calls, return_exceptions=True)
+    errors: List[Exception] = [
+        result for result in results if isinstance(result, Exception)
+    ]
+    if len(errors) == len(results):
+        raise errors[0]
+    for err in errors:
+        _LOGGER.error("A script call failed: %s", err)
 
 
 class Gemma4EventHandler(AsyncEventHandler):
@@ -57,101 +74,119 @@ class Gemma4EventHandler(AsyncEventHandler):
                 language = transcript.language or "en"
                 satellite_info: Optional[SatelliteInfo] = None
                 satellite_info_task: Optional[asyncio.Task] = None
-                if transcript.context:
-                    device_id = transcript.context.get("device_id")
-                    satellite_id = transcript.context.get("satellite_id")
-                    satellite_info_task = asyncio.create_task(
-                        self.state.hass.get_satellite_info(device_id, satellite_id)
-                    )
+                try:
+                    if transcript.context:
+                        device_id = transcript.context.get("device_id")
+                        satellite_id = transcript.context.get("satellite_id")
+                        satellite_info_task = asyncio.create_task(
+                            self.state.hass.get_satellite_info(device_id, satellite_id)
+                        )
 
-                loop = asyncio.get_running_loop()
-                tool_calls, response_text = await loop.run_in_executor(
-                    self.state.llama_executor,
-                    self.state.recognizer.get_tool_calls,
-                    transcript.text,
-                    language,
-                )
-                if not tool_calls:
+                    loop = asyncio.get_running_loop()
+                    tool_calls, response_text = await loop.run_in_executor(
+                        self.state.llama_executor,
+                        self.state.recognizer.get_tool_calls,
+                        transcript.text,
+                        language,
+                    )
+                    if not tool_calls:
+                        await self.write_event(
+                            NotHandled(
+                                text=response_text, context=transcript.context
+                            ).event()
+                        )
+                        return True
+
+                    if satellite_info_task:
+                        try:
+                            satellite_info = await asyncio.wait_for(
+                                satellite_info_task, timeout=SATELLITE_TIMEOUT
+                            )
+                        except Exception as err:  # pylint: disable=broad-except
+                            _LOGGER.warning(
+                                "Could not get satellite context; continuing: %s", err
+                            )
+
+                    service_calls = []
+                    for tool_id, tool_args in tool_calls:
+                        # Only targeted tools may run; models can still invent a
+                        # name that is not a tool at all.
+                        tool = self.state.tools.get(tool_id)
+                        if tool is None:
+                            _LOGGER.warning("Ignoring unknown tool: %s", tool_id)
+                            continue
+
+                        # The satellite's area is how a name shared by several
+                        # things gets narrowed down.
+                        call = map_tool_call(
+                            tool, tool_args, satellite_info, self.state.geometry
+                        )
+                        if call.unresolved:
+                            _LOGGER.warning(
+                                "Dropping unresolvable field(s) of %s: %s",
+                                call.script_id,
+                                call.unresolved,
+                            )
+                        if call.ambiguous:
+                            _LOGGER.warning(
+                                "Dropping ambiguous field(s) of %s: %s",
+                                call.script_id,
+                                call.ambiguous,
+                            )
+
+                        if not call.can_run:
+                            _LOGGER.warning(
+                                "Not running %s: required field(s) %s could not be "
+                                "resolved to anything in this home",
+                                call.script_id,
+                                call.missing_required,
+                            )
+                            continue
+
+                        variables: Dict[str, Any] = dict(call.variables)
+                        if satellite_info:
+                            satellite_info_dict = satellite_info.as_dict()
+                            satellite_info_dict["language"] = language
+                            variables["satellite"] = satellite_info_dict
+
+                        _LOGGER.debug(
+                            "Calling script %s with variables %s",
+                            call.script_id,
+                            variables,
+                        )
+                        service_calls.append(
+                            self.state.hass.call_service(
+                                "script",
+                                "turn_on",
+                                service_data={"variables": variables},
+                                target={"entity_id": call.script_id},
+                            )
+                        )
+
+                    if not service_calls:
+                        # Every call was unknown or unresolvable, so nothing ran.
+                        await self.write_event(
+                            NotHandled(
+                                text=response_text, context=transcript.context
+                            ).event()
+                        )
+                        return True
+
+                    # Do not claim the request was handled until Home Assistant
+                    # has accepted at least one script call. Multiple calls are
+                    # dispatched concurrently.
+                    await _wait_for_service_calls(service_calls)
+
                     await self.write_event(
-                        NotHandled(
-                            text=response_text, context=transcript.context
-                        ).event()
+                        Handled(text="", context=transcript.context).event()
                     )
-                    return True
-
-                if satellite_info_task:
-                    satellite_info = await satellite_info_task
-
-                ran_script = False
-                for tool_id, tool_args in tool_calls:
-                    # Only tools in the targeted set may run: the model can emit
-                    # a name that is not a tool at all, and (once scripts can be
-                    # enabled individually) one that is a script we must not run.
-                    tool = self.state.tools.get(tool_id)
-                    if tool is None:
-                        _LOGGER.warning("Ignoring unknown tool: %s", tool_id)
-                        continue
-
-                    # The satellite's area is how a name shared by several
-                    # things ("Media Player" in three rooms) gets narrowed down.
-                    call = map_tool_call(
-                        tool, tool_args, satellite_info, self.state.geometry
-                    )
-                    if call.unresolved:
-                        _LOGGER.warning(
-                            "Dropping unresolvable field(s) of %s: %s",
-                            call.script_id,
-                            call.unresolved,
-                        )
-                    if call.ambiguous:
-                        _LOGGER.warning(
-                            "Dropping ambiguous field(s) of %s: %s",
-                            call.script_id,
-                            call.ambiguous,
-                        )
-
-                    if not call.can_run:
-                        _LOGGER.warning(
-                            "Not running %s: required field(s) %s could not be "
-                            "resolved to anything in this home",
-                            call.script_id,
-                            call.missing_required,
-                        )
-                        continue
-
-                    variables: Dict[str, Any] = dict(call.variables)
-                    if satellite_info:
-                        satellite_info_dict = satellite_info.as_dict()
-                        satellite_info_dict["language"] = language
-                        variables["satellite"] = satellite_info_dict
-
-                    _LOGGER.debug(
-                        "Calling script %s with variables %s",
-                        call.script_id,
-                        variables,
-                    )
-                    ran_script = True
-                    asyncio.create_task(
-                        self.state.hass.call_service(
-                            "script",
-                            "turn_on",
-                            service_data={"variables": variables},
-                            target={"entity_id": call.script_id},
-                        )
-                    )
-
-                if not ran_script:
-                    # Every call was unknown or unresolvable, so nothing ran.
-                    await self.write_event(
-                        NotHandled(
-                            text=response_text, context=transcript.context
-                        ).event()
-                    )
-                    return True
-
-                await self.write_event(
-                    Handled(text="", context=transcript.context).event()
-                )
+                finally:
+                    # A no-match response returns before satellite context is
+                    # needed. Do not leave its registry task orphaned.
+                    if satellite_info_task and not satellite_info_task.done():
+                        satellite_info_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await satellite_info_task
             except Exception:
                 _LOGGER.exception("Unexpected error during handling")
                 await self.write_event(
@@ -178,7 +213,7 @@ class Gemma4EventHandler(AsyncEventHandler):
                     ),
                     installed=True,
                     description="Gemma 4 Script Runner",
-                    version="0.0.1",
+                    version=APP_VERSION,
                     models=[
                         HandleModel(
                             name="gemma4",

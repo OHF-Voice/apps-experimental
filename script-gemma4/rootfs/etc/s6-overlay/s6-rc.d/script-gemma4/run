@@ -3,7 +3,7 @@
 # ==============================================================================
 # Start script-gemma4 service
 # ==============================================================================
-cd /usr/src
+cd /usr/src || exit 1
 
 flags=()
 
@@ -11,8 +11,15 @@ if bashio::config.true 'debug_logging'; then
     flags+=('--debug')
 fi
 
+if bashio::config.true 'flash_attention'; then
+    flags+=('--flash-attention')
+else
+    flags+=('--no-flash-attention')
+fi
+
 export HF_HOME=/data/cache
-export HF_TOKEN="$(bashio::config 'hf_token')"
+HF_TOKEN="$(bashio::config 'hf_token')"
+export HF_TOKEN
 
 exec .venv/bin/python3 app.py \
     --uri 'tcp://0.0.0.0:10500' \
@@ -29,4 +36,4 @@ exec .venv/bin/python3 app.py \
     --n-ctx-overhead "$(bashio::config 'n_ctx_overhead')" \
     --n-threads "$(bashio::config 'n_threads')" \
     --max-tokens "$(bashio::config 'max_tokens')" \
-    ${flags[@]}
+    "${flags[@]}"

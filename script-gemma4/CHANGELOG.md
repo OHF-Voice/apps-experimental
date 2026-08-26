@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.7.0
+
+- Update `llama-cpp-python` from 0.3.24 to 0.3.35 and invalidate saved model
+  state across llama.cpp, model, context-size, and flash-attention changes
+- Enable CPU flash attention by default. On a Raspberry Pi 5 it reduced median
+  latency by about 3.6% and prefix rebuild time by about 3.9%, without adding a
+  separate compilation step
+- Do not run a script when the model omits one of its required fields, and drop
+  fields that are not part of the script's schema
+- Fix satellite lookup when the satellite entity has its own area or when its
+  device id must be resolved from the entity registry
+- Preserve per-script field names when global names are edited
+- Apply Home Assistant reloads, targeting changes, and name changes
+  transactionally, leaving the working model and UI state untouched if the new
+  prefix cannot be built
+- Wait for Home Assistant to accept script calls before reporting a command as
+  handled, while allowing successful calls in a multi-command request to
+  proceed when another call fails
+- Recover automatically from corrupt or rejected saved model state, and restore
+  the previous model even when a failed tool change attempted to grow context
+- Accept single-quoted tool values containing commas and safely ignore malformed
+  tool calls
+
 ## 1.6.0
 
 - Use the voice satellite's area to pick between things that share a name. Home

@@ -7,11 +7,13 @@ import os
 import pickle
 import re
 import time
+from ast import literal_eval
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 from huggingface_hub import hf_hub_download
 from llama_cpp import Llama
+from llama_cpp import __version__ as LLAMA_CPP_VERSION
 
 from util import LRUCache
 
@@ -48,6 +50,7 @@ class Gemma4Recognizer:
         n_ctx_overhead: int = 128,
         n_threads: Optional[int] = None,
         max_tokens: int = 64,
+        flash_attn: bool = True,
         debug: bool = False,
     ) -> None:
         self.llm: Optional[Llama] = None
@@ -64,6 +67,8 @@ class Gemma4Recognizer:
         self.n_ctx_overhead = n_ctx_overhead
         self.n_threads = n_threads
         self.max_tokens = max_tokens
+        self.flash_attn = flash_attn
+        self.model_path: Optional[Path] = None
         self.temperature = 0.0
         self.top_p = 1.0
         self.top_k = 1
@@ -116,11 +121,13 @@ class Gemma4Recognizer:
                 local_files_only=False,
             )
         _LOGGER.debug("Loading gemma4: %s", model_path)
+        self.model_path = Path(model_path).resolve()
         self.llm = Llama(
             model_path=model_path,
             chat_template_kwargs={"enable_thinking": self.enable_thinking},
             n_ctx=n_ctx,
             n_threads=self.n_threads,
+            flash_attn=self.flash_attn,
             verbose=self.debug,
         )
 
@@ -129,8 +136,15 @@ class Gemma4Recognizer:
         assert self.llm, "Not loaded"
         assert self.tools is not None, "No tools"
 
+        runtime_model_id = (
+            f"llama-cpp-python/{LLAMA_CPP_VERSION};"
+            f"n_ctx={self.llm.n_ctx()};"
+            f"flash_attn={int(self.flash_attn)};"
+            f"model_path={self.model_path};"
+            f"{self.repo_id}/{self.filename}"
+        )
         actual_tools_hash = _get_tools_hash(
-            f"{self.repo_id}/{self.filename}", self.tools, self.system_prompt
+            runtime_model_id, self.tools, self.system_prompt
         )
         state_metadata_path = self.state_path.with_suffix(".sha256")
         if state_metadata_path.exists() and self.state_path.exists():
@@ -139,11 +153,20 @@ class Gemma4Recognizer:
             ).strip()
             if expected_tools_hash == actual_tools_hash:
                 _LOGGER.debug("Cache hit. Loading state: %s", self.state_path)
-                with open(self.state_path, "rb") as state_file:
-                    state = pickle.load(state_file)
+                try:
+                    with open(self.state_path, "rb") as state_file:
+                        state = pickle.load(state_file)
 
-                self.llm.load_state(state)
-                return
+                    self.llm.load_state(state)
+                    return
+                except Exception as err:  # pylint: disable=broad-except
+                    # State is an optimization, never a reason to keep the app
+                    # from starting. Rebuild if the file is corrupt or the
+                    # runtime rejects it despite matching metadata.
+                    _LOGGER.warning(
+                        "Could not restore cached llama.cpp state; rebuilding: %s",
+                        err,
+                    )
 
         _LOGGER.info("Retraining...")
         if self.cache is not None:
@@ -202,10 +225,10 @@ class Gemma4Recognizer:
         needed_n_ctx = self.required_n_ctx(new_tools)
         grow_context = (self.n_ctx is None) and (needed_n_ctx > self.llm.n_ctx())
 
-        # Snapshot the live prefix so a failed rebuild can be undone. Pointless
-        # when the context has to grow, since the state cannot be restored into
-        # a differently sized context.
-        live_state = None if grow_context else self.llm.save_state()
+        # Keep both the live object and its prefix so even a failed context
+        # growth can roll back without requiring an app restart.
+        old_llm = self.llm
+        live_state = old_llm.save_state()
 
         self.ready = False
         if self.cache is not None:
@@ -226,20 +249,12 @@ class Gemma4Recognizer:
             self._restore_or_build_state()
         except Exception:
             self.tools = old_tools
-            if live_state is None:
-                # The model was replaced, so there is nothing to roll back to.
-                _LOGGER.exception(
-                    "Failed to load %s tool(s) and could not roll back; "
-                    "restart the app",
-                    len(new_tools),
-                )
-                raise
-
             _LOGGER.exception(
                 "Failed to load %s tool(s), keeping the previous %s",
                 len(new_tools),
                 len(old_tools),
             )
+            self.llm = old_llm
             self.llm.load_state(live_state)
             self.ready = True
             raise
@@ -282,7 +297,7 @@ class Gemma4Recognizer:
         end_time = time.monotonic()
         _LOGGER.debug("Response in %s second(s): %s", end_time - start_time, response)
 
-        content = response["choices"][0]["message"]["content"]
+        content = response["choices"][0]["message"]["content"] or ""
         model_response = (_parse_tool_calls(content), content)
         if self.cache is not None:
             _LOGGER.debug("Caching '%s' -> %s", cache_key, model_response)
@@ -308,6 +323,7 @@ class Gemma4Recognizer:
             "n_threads": n_threads,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
+            "flash_attn": self.flash_attn,
             "draft_model": draft_model,
         }
 
@@ -429,9 +445,17 @@ def _parse_tool_calls(text: str) -> List[Tuple[str, Dict[str, Any]]]:
         args = {}
 
         if raw_args:
+            valid = True
             for part in _split_args(raw_args):
+                if ":" not in part:
+                    _LOGGER.warning("Ignoring malformed tool call argument: %r", part)
+                    valid = False
+                    break
                 key, value = part.split(":", 1)
                 args[key.strip()] = _parse_value(value)
+
+            if not valid:
+                continue
 
         calls.append((name, args))
 
@@ -442,7 +466,7 @@ def _normalize_gemma_tool_text(text: str) -> str:
     return text.replace('<|"|>', '"').replace("<|'|>", "'")
 
 
-def _parse_value(value: str):
+def _parse_value(value: str) -> Any:
     value = _normalize_gemma_tool_text(value.strip())
 
     # JSON-ish arrays/objects
@@ -450,12 +474,21 @@ def _parse_value(value: str):
         try:
             return json.loads(value)
         except json.JSONDecodeError:
-            pass
+            try:
+                return literal_eval(value)
+            except (SyntaxError, ValueError):
+                pass
 
     if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
         try:
             return json.loads(value)
         except json.JSONDecodeError:
+            return value[1:-1]
+
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        try:
+            return literal_eval(value)
+        except (SyntaxError, ValueError):
             return value[1:-1]
 
     if re.fullmatch(r"-?\d+", value):
@@ -478,7 +511,7 @@ def _parse_value(value: str):
 def _split_args(raw_args: str) -> List[str]:
     parts = []
     buf = []
-    in_string = False
+    quote = None
     escape = False
     depth = 0
 
@@ -493,23 +526,28 @@ def _split_args(raw_args: str) -> List[str]:
             escape = True
             continue
 
-        if ch == '"':
+        if quote is not None:
             buf.append(ch)
-            in_string = not in_string
+            if ch == quote:
+                quote = None
             continue
 
-        if not in_string:
-            if ch in "[{(":
-                depth += 1
-            elif ch in "]})":
-                depth -= 1
+        if ch in ('"', "'"):
+            buf.append(ch)
+            quote = ch
+            continue
 
-            if ch == "," and depth == 0:
-                part = "".join(buf).strip()
-                if part:
-                    parts.append(part)
-                buf.clear()
-                continue
+        if ch in "[{(":
+            depth += 1
+        elif ch in "]})":
+            depth -= 1
+
+        if ch == "," and depth == 0:
+            part = "".join(buf).strip()
+            if part:
+                parts.append(part)
+            buf.clear()
+            continue
 
         buf.append(ch)
 

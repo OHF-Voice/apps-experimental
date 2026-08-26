@@ -10,6 +10,7 @@ from overrides import Overrides
 from tool_mapping import HomeGeometry
 
 BASE_DIR = Path(__file__).parent
+APP_VERSION = "1.7.0"
 
 if TYPE_CHECKING:
     from gemma4_recognizer import Gemma4Recognizer

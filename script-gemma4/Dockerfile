@@ -2,6 +2,8 @@
 # We always compile from source to maximize optimizations.
 FROM ghcr.io/home-assistant/base-debian:bookworm AS llama
 
+ARG TARGETARCH
+
 WORKDIR /usr/src
 
 RUN \
@@ -23,7 +25,11 @@ RUN \
 COPY requirements.llama.txt ./
 
 RUN \
-    CMAKE_ARGS='-DCMAKE_BUILD_TYPE=Release' \
+    llama_cmake_args='-DCMAKE_BUILD_TYPE=Release' \
+    && if [[ "${TARGETARCH}" == "arm64" ]]; then \
+        llama_cmake_args+=' -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.2-a+fp16+dotprod'; \
+    fi \
+    && CMAKE_ARGS="${llama_cmake_args}" \
     .venv/bin/pip install --no-cache-dir \
     -r ./requirements.llama.txt
 

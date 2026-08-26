@@ -140,8 +140,17 @@ def map_tool_call(
     """
     call = MappedCall(tool_id=tool.name)
     required = required_fields(tool)
+    properties = ((tool.tool.get("function") or {}).get("parameters") or {}).get(
+        "properties"
+    ) or {}
 
     for var_key, var_value in tool_args.items():
+        if var_key not in properties:
+            _LOGGER.warning(
+                "Dropping unknown field %s from tool %s", var_key, tool.name
+            )
+            continue
+
         # An enum and its name map are always generated together, so an empty
         # map means this field is not name-mapped at all.
         name_map = tool.name_map.get(var_key)
@@ -149,14 +158,17 @@ def map_tool_call(
             call.variables[var_key] = var_value
             continue
 
-        candidates = name_map.get(var_value)
+        try:
+            candidates = name_map.get(var_value)
+        except TypeError:
+            # A malformed model response may put a list or object in a scalar
+            # enum field. Treat it like any other unknown name.
+            candidates = None
         if not candidates:
             _LOGGER.debug(
                 "No mapping for %s=%r in tool %s", var_key, var_value, tool.name
             )
             call.unresolved[var_key] = var_value
-            if var_key in required:
-                call.missing_required.append(var_key)
             continue
 
         narrowed = _narrow(sorted(candidates), satellite, geometry)
@@ -171,13 +183,13 @@ def map_tool_call(
                 narrowed,
             )
             call.ambiguous[var_key] = narrowed
-            if var_key in required:
-                call.missing_required.append(var_key)
             continue
 
         mapped_value = narrowed[0]
         _LOGGER.debug("Mapping '%s' -> '%s'", var_value, mapped_value)
         call.variables[var_key] = mapped_value
 
-    call.missing_required.sort()
+    # This catches both fields that were supplied but could not be resolved and
+    # required fields the model omitted entirely.
+    call.missing_required = sorted(required - set(call.variables))
     return call

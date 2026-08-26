@@ -8,7 +8,7 @@ diskcache==5.6.3
     # via llama-cpp-python
 jinja2==3.1.6
     # via llama-cpp-python
-llama-cpp-python==0.3.24
+llama-cpp-python==0.3.35
     # via -r requirements.llama.in
 markupsafe==3.0.3
     # via jinja2
