@@ -13,25 +13,52 @@ from wyoming.server import AsyncEventHandler
 
 from const import APP_VERSION, AppState
 from hass_api import SatelliteInfo
-from tool_mapping import map_tool_call
+from tool_mapping import MappedCall, map_tool_call
 
 _LOGGER = logging.getLogger(__name__)
 
 # Satellite context is helpful for disambiguation, but must never hold a voice
 # command open indefinitely if Home Assistant's registry API stalls.
 SATELLITE_TIMEOUT = 10.0
+SERVICE_CALL_TIMEOUT = 10.0
 
 
-async def _wait_for_service_calls(service_calls: List[Any]) -> None:
+async def _wait_for_service_calls(
+    service_calls: List[Any], timeout: float = SERVICE_CALL_TIMEOUT
+) -> None:
     """Wait until Home Assistant accepts at least one script call."""
-    results = await asyncio.gather(*service_calls, return_exceptions=True)
+    results = await asyncio.gather(
+        *(
+            asyncio.wait_for(service_call, timeout=timeout)
+            for service_call in service_calls
+        ),
+        return_exceptions=True,
+    )
     errors: List[Exception] = [
         result for result in results if isinstance(result, Exception)
     ]
     if len(errors) == len(results):
         raise errors[0]
     for err in errors:
-        _LOGGER.error("A script call failed: %s", err)
+        if isinstance(err, TimeoutError):
+            _LOGGER.error("A script call timed out after %s second(s)", timeout)
+        else:
+            _LOGGER.error("A script call failed: %s", err)
+
+
+def _missing_required_error_text(calls: List[MappedCall]) -> str:
+    """Describe script calls that are missing required parameters."""
+    if len(calls) == 1:
+        call = calls[0]
+        return (
+            f"Cannot run {call.script_id}: missing required parameter(s): "
+            f"{', '.join(call.missing_required)}"
+        )
+
+    details = "; ".join(
+        f"{call.script_id} ({', '.join(call.missing_required)})" for call in calls
+    )
+    return f"Cannot run scripts because required parameters are missing: {details}"
 
 
 class Gemma4EventHandler(AsyncEventHandler):
@@ -107,7 +134,8 @@ class Gemma4EventHandler(AsyncEventHandler):
                                 "Could not get satellite context; continuing: %s", err
                             )
 
-                    service_calls = []
+                    mapped_calls: List[MappedCall] = []
+                    calls_missing_required: List[MappedCall] = []
                     for tool_id, tool_args in tool_calls:
                         # Only targeted tools may run; models can still invent a
                         # name that is not a tool at all.
@@ -141,8 +169,25 @@ class Gemma4EventHandler(AsyncEventHandler):
                                 call.script_id,
                                 call.missing_required,
                             )
+                            calls_missing_required.append(call)
                             continue
 
+                        mapped_calls.append(call)
+
+                    if calls_missing_required:
+                        error_text = _missing_required_error_text(
+                            calls_missing_required
+                        )
+                        await self.write_event(
+                            Error(
+                                text=error_text,
+                                code="missing-required-parameters",
+                            ).event()
+                        )
+                        return True
+
+                    service_calls = []
+                    for call in mapped_calls:
                         variables: Dict[str, Any] = dict(call.variables)
                         if satellite_info:
                             satellite_info_dict = satellite_info.as_dict()

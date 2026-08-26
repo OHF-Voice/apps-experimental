@@ -63,6 +63,21 @@ class ToolCallParserTests(unittest.TestCase):
 
 
 class StateCacheTests(unittest.TestCase):
+    def test_state_parent_directory_is_created(self):
+        tools = [{"type": "function", "function": {"name": "demo"}}]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "missing" / "nested" / "state.bin"
+            recognizer = Gemma4Recognizer(state_path=state_path)
+            recognizer.tools = tools
+            recognizer.llm = _FakeLlama()
+            recognizer.model_path = Path("/model")
+
+            recognizer._restore_or_build_state()  # pylint: disable=protected-access
+
+            self.assertTrue(state_path.is_file())
+            self.assertTrue(state_path.with_suffix(".sha256").is_file())
+            self.assertFalse(state_path.with_suffix(".tmp").exists())
+
     def test_corrupt_matching_state_is_rebuilt(self):
         tools = [{"type": "function", "function": {"name": "demo"}}]
         with tempfile.TemporaryDirectory() as temp_dir:

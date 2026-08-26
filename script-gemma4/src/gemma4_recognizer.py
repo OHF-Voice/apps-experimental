@@ -185,6 +185,7 @@ class Gemma4Recognizer:
         # cannot leave a truncated state behind. The hash is written last: if
         # anything interrupts us, the mismatch just costs a rebuild next start.
         _LOGGER.debug("Saving state: %s", self.state_path)
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_state_path = self.state_path.with_suffix(".tmp")
         with open(tmp_state_path, "wb") as state_file:
             state = self.llm.save_state()
