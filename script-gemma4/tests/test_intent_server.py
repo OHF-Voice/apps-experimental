@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -107,6 +108,7 @@ class MissingRequiredHandlerTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         recognizer = SimpleNamespace(
+            ready=True,
             get_tool_calls=lambda _text, _language: (
                 [("device_on_off", {"action": "on"})],
                 "Would run device_on_off with action on",
@@ -121,6 +123,7 @@ class MissingRequiredHandlerTests(unittest.IsolatedAsyncioTestCase):
                 llama_executor=executor,
                 tools={"device_on_off": tool},
                 geometry=None,
+                model_rebuilding=threading.Event(),
             )
             handler = object.__new__(Gemma4EventHandler)
             handler.state = state
@@ -139,6 +142,32 @@ class MissingRequiredHandlerTests(unittest.IsolatedAsyncioTestCase):
             "device_name",
             error.text,
         )
+
+    async def test_rebuild_returns_error_without_queuing_recognition(self):
+        recognizer = SimpleNamespace(
+            ready=True,
+            get_tool_calls=unittest.mock.Mock(),
+        )
+        rebuilding = threading.Event()
+        rebuilding.set()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            state = SimpleNamespace(
+                recognizer=recognizer,
+                model_rebuilding=rebuilding,
+                llama_executor=executor,
+            )
+            handler = object.__new__(Gemma4EventHandler)
+            handler.state = state
+            handler.write_event = AsyncMock()
+
+            await handler._handle_event(
+                Transcript(text="turn on the lights", language="en").event()
+            )
+
+        recognizer.get_tool_calls.assert_not_called()
+        error = Error.from_event(handler.write_event.await_args.args[0])
+        self.assertEqual("model-rebuilding", error.code)
 
 
 if __name__ == "__main__":

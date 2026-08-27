@@ -13,7 +13,7 @@ from wyoming.server import AsyncServer
 
 import overrides
 from const import BASE_DIR, AppState
-from gemma4_recognizer import Gemma4Recognizer
+from gemma4_recognizer import DEFAULT_MAX_TOKENS, Gemma4Recognizer
 from hass_api import HomeAssistant
 from intent_server import Gemma4EventHandler
 from web_server import make_web_server, run_web_server
@@ -74,7 +74,7 @@ async def main() -> None:
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=64,
+        default=DEFAULT_MAX_TOKENS,
         help="Maximum number of tokens the model can generate",
     )
     parser.add_argument(
@@ -149,7 +149,7 @@ async def main() -> None:
         n_ctx=args.n_ctx if args.n_ctx > 0 else None,
         n_ctx_overhead=args.n_ctx_overhead,
         n_threads=args.n_threads if args.n_threads > 0 else None,
-        max_tokens=args.max_tokens,
+        max_tokens=all_overrides.max_tokens or args.max_tokens,
         flash_attn=args.flash_attention,
         debug=args.debug,
     )

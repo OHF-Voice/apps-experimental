@@ -70,6 +70,31 @@ tools:
               - stop
         required:
           - action
+  - type: function
+    function:
+      name: configure_rooms
+      description: Set the operating mode in one or more rooms
+      parameters:
+        type: object
+        properties:
+          mode:
+            type: string
+            enum:
+              - cleaning
+              - normal
+              - quiet
+          room_names:
+            type: array
+            items:
+              type: string
+              enum:
+                - Bedroom
+                - Kitchen
+                - Office
+            uniqueItems: true
+        required:
+          - mode
+          - room_names
 
 sentences:
   - text: "turn on the kitchen lights"
@@ -96,5 +121,13 @@ sentences:
       - name: media_control
         args:
           action: pause
+  - text: "set the kitchen and office to cleaning mode"
+    expected:
+      - name: configure_rooms
+        args:
+          mode: cleaning
+          room_names:
+            - Kitchen
+            - Office
   - text: "the quick brown fox jumps over the lazy dog"
     expected: []

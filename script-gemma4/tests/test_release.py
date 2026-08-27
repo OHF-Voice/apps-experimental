@@ -4,6 +4,7 @@ from pathlib import Path
 import yaml
 
 from const import APP_VERSION
+from gemma4_recognizer import DEFAULT_MAX_TOKENS
 
 
 class ReleaseMetadataTests(unittest.TestCase):
@@ -18,6 +19,12 @@ class ReleaseMetadataTests(unittest.TestCase):
         config = yaml.safe_load((project_dir / "config.yaml").read_text("utf-8"))
 
         self.assertIs(True, config["options"]["flash_attention"])
+
+    def test_generation_limit_matches_runtime_default(self):
+        project_dir = Path(__file__).parent.parent
+        config = yaml.safe_load((project_dir / "config.yaml").read_text("utf-8"))
+
+        self.assertEqual(DEFAULT_MAX_TOKENS, config["options"]["max_tokens"])
 
 
 if __name__ == "__main__":

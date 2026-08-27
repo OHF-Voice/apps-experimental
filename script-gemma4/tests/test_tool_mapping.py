@@ -4,7 +4,7 @@ from hass_api import SatelliteInfo, Tool
 from tool_mapping import HomeGeometry, map_tool_call
 
 
-def _tool(required=None, name_map=None):
+def _tool(required=None, name_map=None, target_schema=None):
     return Tool(
         name="demo",
         tool={
@@ -14,7 +14,7 @@ def _tool(required=None, name_map=None):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "target": {"type": "string"},
+                        "target": target_schema or {"type": "string"},
                         "note": {"type": "string"},
                     },
                     "required": required or [],
@@ -60,6 +60,115 @@ class ToolMappingTests(unittest.TestCase):
 
         self.assertTrue(call.can_run)
         self.assertEqual("media_player.office", call.variables["target"])
+
+    def test_multiple_names_resolve_in_order_and_deduplicate_ids(self):
+        tool = _tool(
+            required=["target"],
+            target_schema={
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["Desk", "Desk Light", "Kitchen"],
+                },
+                "uniqueItems": True,
+            },
+            name_map={
+                "target": {
+                    "Desk": ["light.desk"],
+                    "Desk Light": ["light.desk"],
+                    "Kitchen": ["light.kitchen"],
+                }
+            },
+        )
+
+        call = map_tool_call(tool, {"target": ["Desk", "Kitchen", "Desk Light"]})
+
+        self.assertTrue(call.can_run)
+        self.assertEqual(["light.desk", "light.kitchen"], call.variables["target"])
+
+    def test_one_unresolved_name_drops_entire_multiple_field(self):
+        tool = _tool(
+            required=["target"],
+            target_schema={
+                "type": "array",
+                "items": {"type": "string", "enum": ["Desk", "Kitchen"]},
+                "uniqueItems": True,
+            },
+            name_map={
+                "target": {
+                    "Desk": ["light.desk"],
+                    "Kitchen": ["light.kitchen"],
+                }
+            },
+        )
+
+        call = map_tool_call(tool, {"target": ["Desk", "Garage"]})
+
+        self.assertFalse(call.can_run)
+        self.assertNotIn("target", call.variables)
+        self.assertEqual(["Garage"], call.unresolved["target"])
+        self.assertEqual(["target"], call.missing_required)
+
+    def test_one_ambiguous_name_drops_entire_multiple_field(self):
+        tool = _tool(
+            required=["target"],
+            target_schema={
+                "type": "array",
+                "items": {"type": "string", "enum": ["Desk", "Speaker"]},
+                "uniqueItems": True,
+            },
+            name_map={
+                "target": {
+                    "Desk": ["light.desk"],
+                    "Speaker": [
+                        "media_player.kitchen",
+                        "media_player.office",
+                    ],
+                }
+            },
+        )
+
+        call = map_tool_call(tool, {"target": ["Desk", "Speaker"]})
+
+        self.assertFalse(call.can_run)
+        self.assertNotIn("target", call.variables)
+        self.assertEqual(
+            ["media_player.kitchen", "media_player.office"],
+            call.ambiguous["target"],
+        )
+
+    def test_scalar_is_rejected_for_multiple_name_field(self):
+        tool = _tool(
+            required=["target"],
+            target_schema={
+                "type": "array",
+                "items": {"type": "string", "enum": ["Desk"]},
+                "uniqueItems": True,
+            },
+            name_map={"target": {"Desk": ["light.desk"]}},
+        )
+
+        call = map_tool_call(tool, {"target": "Desk"})
+
+        self.assertFalse(call.can_run)
+        self.assertNotIn("target", call.variables)
+        self.assertEqual("Desk", call.unresolved["target"])
+
+    def test_multiple_select_rejects_unknown_option(self):
+        tool = _tool(
+            required=["target"],
+            target_schema={
+                "type": "array",
+                "items": {"type": "string", "enum": ["email", "sms"]},
+                "uniqueItems": True,
+            },
+        )
+
+        call = map_tool_call(tool, {"target": ["email", "carrier pigeon"]})
+
+        self.assertFalse(call.can_run)
+        self.assertNotIn("target", call.variables)
+        self.assertEqual(["email", "carrier pigeon"], call.unresolved["target"])
 
 
 if __name__ == "__main__":

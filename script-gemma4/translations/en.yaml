@@ -35,7 +35,8 @@ configuration:
   max_tokens:
     name: Maximum tokens
     description: >-
-      Maximum number of tokens the model is allowed to generate.
+      Maximum number of tokens the model is allowed to generate. Complex scripts
+      with many fields need a larger value to avoid truncated tool calls.
   flash_attention:
     name: Flash attention
     description: >-

@@ -22,6 +22,30 @@
   the previous model even when a failed tool change attempted to grow context
 - Accept single-quoted tool values containing commas and safely ignore malformed
   tool calls
+- Load complete script descriptions and fields from Home Assistant's
+  `script/config` API when they are absent from `get_services`
+- Refresh the web UI with separate Scripts, Names, and Test pages, field-name
+  editing in a Details dialog, responsive styling, dark mode, and improved
+  keyboard and screen-reader support
+- Rename Home Assistant reloads to **Sync & rebuild** and explain that prompt
+  cache rebuilds do not train or fine-tune the model
+- Reject voice requests received during a model-prefix rebuild instead of
+  queueing them to run later
+- Add deadlines to Home Assistant HTTP and websocket operations
+- Support `multiple: true` for text, select, entity, area, and floor script
+  selectors, resolving name-based lists atomically
+- Accept labelled select options and add selector showcase blueprints
+- Raise the default generation limit from 64 to 128 tokens for scripts with many
+  fields, and report truncated model responses instead of treating them as an
+  ordinary non-match
+- Add a Settings page for changing the generation limit at runtime and viewing
+  the effective model, context size, CPU threads, and flash attention state
+- Let successful results on the Test page be run in Home Assistant through
+  short-lived, single-use resolved-call tokens
+- Add search, explicit Targetable checkboxes, and independently collapsible
+  Entities, Areas, and Floors sections to the Names page
+- Block page interaction with an indeterminate progress dialog while model
+  context changes are being applied
 
 ## 1.6.0
 

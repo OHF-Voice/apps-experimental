@@ -2,65 +2,85 @@
 {% block heading %}Scripts{% endblock %}
 
 {% block style %}
-  .fields { margin: 0; padding-left: 1.1rem; }
-  .fields li { margin: 0.1rem 0; }
-  .tag { font-size: 0.75rem; padding: 0.05rem 0.35rem; border-radius: 3px;
-         border: 1px solid #bbb; background: #f3f3f3; margin-left: 0.3rem; }
-  .tag.req { border-color: #cf222e; color: #cf222e; }
-  #sentence { font-size: 1rem; padding: 0.5rem 0.4rem; border: 1px solid #bbb;
-              border-radius: 6px; flex: 1; min-width: 16rem; }
-  #language { font-size: 1rem; padding: 0.5rem 0.4rem; border: 1px solid #bbb;
-              border-radius: 6px; width: 4rem; }
-  .off { color: #666; }
-  td.pick { text-align: center; width: 3rem; }
-  #apply-bar { position: sticky; bottom: 0; background: #fff; padding: 0.75rem 0;
-               border-top: 1px solid #ddd; margin-top: 1rem; display: flex;
-               gap: 0.75rem; align-items: center; flex-wrap: wrap; }
-  #apply-bar.hidden { display: none; }
-  .tag.forced { border-color: #bf8700; color: #bf8700; background: #fff8e1; }
+.fields { margin: 0; padding-left: 1.1rem; }
+.fields li { margin: 0.1rem 0; }
+.tag.req { border-color: var(--danger); color: var(--danger); }
+.off { color: var(--muted); }
+td.pick { text-align: center; width: 3rem; }
+#apply-bar { position: sticky; bottom: 0; background: var(--surface); padding: 0.75rem 1rem;
+             border: 1px solid var(--border); border-radius: 8px; margin-top: 1rem; display: flex;
+             gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+#apply-bar.hidden { display: none; }
+.tag.forced { border-color: var(--warning); color: var(--warning); background: var(--warning-bg); }
+.sync-card { display: flex; gap: 1rem; align-items: center; justify-content: space-between; }
+.sync-card p { margin: 0.2rem 0 0; }
+.script-name { min-width: 13rem; }
+.count { color: var(--muted); font-weight: 400; }
+.details-btn { padding: 0; border: 0; background: none; color: var(--accent);
+               font-size: 0.82rem; font-weight: 600; }
+.details-btn:hover:not([disabled]) { background: none; text-decoration: underline; }
+dialog { width: min(920px, calc(100% - 2rem)); max-height: calc(100vh - 2rem);
+         padding: 0; color: var(--text); background: var(--surface);
+         border: 1px solid var(--border); border-radius: 12px;
+         box-shadow: 0 18px 50px rgb(0 0 0 / 25%); }
+dialog::backdrop { background: rgb(15 23 42 / 55%); }
+.dialog-header { display: flex; justify-content: space-between; gap: 1rem;
+                 align-items: flex-start; padding: 1rem 1.1rem;
+                 border-bottom: 1px solid var(--border); }
+.dialog-header h2 { margin: 0; }
+.dialog-header p { margin: 0.2rem 0 0; }
+.dialog-close { padding: 0.2rem 0.55rem; min-width: 2rem; }
+.dialog-body { padding: 0 1.1rem 1.1rem; overflow: auto; }
+.dialog-footer { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;
+                 padding: 0.9rem 1.1rem; border-top: 1px solid var(--border); }
+.field-name-input { width: 100%; min-width: 16rem; padding: 0.45rem 0.55rem;
+                    border-radius: 6px; font: inherit; }
+.field-name-input.changed { border-color: var(--accent); background: var(--accent-soft); }
+.field-name-input.empty { border-color: var(--warning); background: var(--warning-bg); }
+.dialog-target { min-width: 14rem; }
+.dialog-status { flex: 1; }
+@media (max-width: 700px) {
+  .sync-card { display: block; }
+  .sync-card button { margin-top: 1rem; width: 100%; }
+}
 {% endblock %}
 
 {% block content %}
-<p class="muted">Type a command to see which script it would run and what
-variables it would get. This does not actually run the script.</p>
+<p class="page-intro">Choose which Home Assistant scripts the model may call and
+review the names, descriptions, and fields it receives.</p>
 
-<div class="controls">
-  <input id="sentence" type="text" autocomplete="off" autofocus
-         placeholder="Type a command, e.g. turn on the kitchen lights">
-  {% if areas %}
-  <select id="test-area" title="Which area the voice satellite is in. Used to pick
-between things that share a name.">
-    <option value="">(no area)</option>
-    {% for area in areas %}
-    <option value="{{ area.id }}">{{ area.name }}</option>
-    {% endfor %}
-  </select>
-  {% endif %}
-  <input id="language" type="text" value="en" title="Language code">
-  <button id="test-btn" data-needs-model>Test</button>
-  <span id="test-status"></span>
+<div class="card">
+<div class="card-body sync-card">
+  <div>
+    <strong>Changed something in Home Assistant?</strong>
+    <p id="reload-status" class="muted" role="status" aria-live="polite">Sync scripts, exposure, names, and aliases,
+    then rebuild the model's prompt cache. This does <b>not</b> train or fine-tune
+    the model. Recognition pauses while the cache rebuilds.</p>
+  </div>
+  <button id="reload-btn" data-needs-model>Sync &amp; rebuild</button>
 </div>
-<div id="result"></div>
-
-<div class="controls">
-  <button id="reload-btn" data-needs-model>Reload from Home Assistant</button>
-  <span id="reload-status" class="muted">Home Assistant is read once, at start.
-  Use this after exposing a script, renaming something, or adding an alias.</span>
 </div>
 
-<h2>Targeted scripts <span class="muted">({{ targeted|length }})</span></h2>
+<section class="card">
+<div class="card-header">
+<div>
+  <h2>Targeted scripts (<span class="count">{{ targeted|length }}</span>)</h2>
+  <p class="muted">Available to the model and eligible to run.</p>
+</div>
+</div>
 {% if targeted %}
-<p class="muted">The model is told about these and can run them. Untick one to
-keep it out of the tool set without changing its exposure in Home Assistant.</p>
+<div class="table-scroll">
 <table>
-  <thead><tr><th class="pick">Target</th><th>Script</th><th>Description</th><th>Fields</th></tr></thead>
+<caption class="sr-only">Scripts currently available to the model</caption>
+<thead><tr><th scope="col" class="pick">Target</th><th scope="col">Script</th><th scope="col">Description</th><th scope="col">Fields</th></tr></thead>
   <tbody>
   {% for script in targeted %}
     <tr>
       <td class="pick"><input type="checkbox" class="target" checked
+                             aria-label="Target {{ script.friendly_name or script.name }}"
                              data-script="{{ script.name }}"
                              {% if not can_save %}disabled{% endif %}></td>
-      <td><code>{{ script.name }}</code><br>
+      <td class="script-name"><code>{{ script.name }}</code><br>
           <span class="muted">{{ script.friendly_name }}</span>
           {%- if script.force_enabled %}
           <span class="tag forced" title="Not exposed to voice in Home Assistant;
@@ -79,19 +99,14 @@ keep it out of the tool set without changing its exposure in Home Assistant.</p>
             {%- if f.required %}<span class="tag req">required</span>{% endif %}
             {%- if f.enum_count %}
               <span class="tag">{{ f.enum_count }} name{{ "" if f.enum_count == 1 else "s" }}</span>
-              {%- if f.shared_names %}
-              <span class="tag forced" title="These names refer to more than one thing. The satellite's area can often pick the right one; giving them distinct names on the Names page always works.">{{ f.shared_names|length }} shared</span>
-              {%- endif %}
-              <br><span class="muted">{{ f.enum_sample }}{% if f.enum_more %}, +{{ f.enum_more }} more{% endif %}</span>
-              {%- if f.shared_names %}
-              <br><span class="muted">Shared by several things: {{ f.shared_sample }}</span>
-              {%- endif %}
-              {%- if f.kind %}
-              <br><a class="muted" href="{{ url_for('names_field_page', script=script.name, field=f.name) }}">Override names for this field</a>
-              {%- if f.scoped_count %}
-              <span class="tag">{{ f.scoped_count }} overridden here</span>
-              {%- endif %}
-              {%- endif %}
+            {%- endif %}
+            {%- if f.kind %}
+            <br><button type="button" class="details-btn"
+                        aria-label="Details for {{ f.name }} on {{ script.friendly_name or script.name }}"
+                        data-script="{{ script.name }}" data-field="{{ f.name }}">Details</button>
+            {%- if f.scoped_count %}
+            <span class="tag">{{ f.scoped_count }} overridden here</span>
+            {%- endif %}
             {%- endif %}
           </li>
         {% endfor %}
@@ -101,24 +116,31 @@ keep it out of the tool set without changing its exposure in Home Assistant.</p>
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
-<p class="warn">No scripts are targeted, so the agent cannot do anything. Expose a
+<div class="card-body"><p class="warn">No scripts are targeted, so the agent cannot do anything. Expose a
 script under its "More info &rarr; Settings &rarr; Voice assistants", or tick one
-below.</p>
+below.</p></div>
 {% endif %}
+</section>
 
-<h2>Not targeted <span class="muted">({{ untargeted|length }})</span></h2>
+<section class="card">
+<div class="card-header">
+ <div>
+   <h2>Not targeted (<span class="count">{{ untargeted|length }}</span>)</h2>
+   <p class="muted">Hidden from the model and never run by this app.</p>
+ </div>
+</div>
 {% if untargeted %}
-<p class="muted">The model is never told about these, so they cannot be run.
-Ticking one adds it to the tool set even if it is not exposed to voice in Home
-Assistant &mdash; this app runs scripts, so only do that for scripts you want a
-voice command to be able to trigger.</p>
+<div class="table-scroll">
 <table>
-  <thead><tr><th class="pick">Target</th><th>Script</th><th>Description</th><th>Fields</th></tr></thead>
+  <caption class="sr-only">Scripts not currently available to the model</caption>
+  <thead><tr><th scope="col" class="pick">Target</th><th scope="col">Script</th><th scope="col">Description</th><th scope="col">Fields</th></tr></thead>
   <tbody>
   {% for script in untargeted %}
     <tr class="off">
       <td class="pick"><input type="checkbox" class="target"
+                             aria-label="Target {{ script.friendly_name or script.name }}"
                              data-script="{{ script.name }}"
                              {% if not can_save %}disabled{% endif %}></td>
       <td><code>{{ script.name }}</code><br>
@@ -141,109 +163,49 @@ voice command to be able to trigger.</p>
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
-<p class="muted">Every script in Home Assistant is targeted.</p>
+<div class="card-body"><p class="muted">Every script in Home Assistant is targeted.</p></div>
 {% endif %}
+</section>
 
 {% if can_save %}
 <div id="apply-bar" class="hidden">
   <button id="apply-btn" data-needs-model>Apply</button>
-  <button id="reset-btn">Discard changes</button>
-  <span id="apply-info" class="muted"></span>
+  <button id="reset-btn" class="secondary">Discard changes</button>
+  <span id="apply-info" class="muted" role="status" aria-live="polite"></span>
 </div>
 {% else %}
 <p class="muted">Targeting cannot be changed: this app was started without a
 path to save the choice to.</p>
 {% endif %}
+
+<dialog id="field-dialog" aria-labelledby="dialog-title"
+        aria-describedby="dialog-instructions">
+  <div class="dialog-header">
+    <div>
+      <h2 id="dialog-title">Field details</h2>
+      <p id="dialog-description" class="muted"></p>
+    </div>
+    <button id="dialog-close" type="button" class="secondary dialog-close"
+            aria-label="Close">&times;</button>
+  </div>
+  <div class="dialog-body">
+    <p id="dialog-instructions" class="muted">Comma-separated. Clear a box to keep that target out of this
+    field. Reset returns to the names used everywhere else.</p>
+    <div id="dialog-content"></div>
+  </div>
+  <div class="dialog-footer">
+    <button id="dialog-save" type="button" data-needs-model>Save overrides</button>
+    <button id="dialog-cancel" type="button" class="secondary">Cancel</button>
+    <span id="dialog-status" class="muted dialog-status"
+          role="status" aria-live="polite"></span>
+  </div>
+</dialog>
 {% endblock %}
 
 {% block script %}
 <script>
-const testBtn = document.getElementById("test-btn");
-const sentenceEl = document.getElementById("sentence");
-const languageEl = document.getElementById("language");
-const testStatusEl = document.getElementById("test-status");
-const resultEl = document.getElementById("result");
-const testUrl = "{{ url_for('test') }}";
-const areaEl = document.getElementById("test-area");
-
-function renderVariables(vars) {
-  const entries = Object.entries(vars);
-  if (!entries.length) return "<div class='muted'>No variables.</div>";
-  return "<table><thead><tr><th>Variable</th><th>Value</th></tr></thead><tbody>" +
-    entries.map(([k, v]) =>
-      "<tr><td>" + esc(k) + "</td><td><code>" + esc(JSON.stringify(v)) +
-      "</code></td></tr>").join("") + "</tbody></table>";
-}
-
-function renderCall(call) {
-  let html = "<div class='summary'>";
-  html += "<div><b>" + (call.can_run ? "<span class='pass'>Would run</span>"
-                                     : "<span class='fail'>Would not run</span>") +
-          "</b> <code>" + esc(call.script_id) + "</code></div>";
-  if (call.unknown_tool) {
-    html += "<div class='fail'>The model made this name up &mdash; it is not a " +
-      "script exposed to voice, so nothing runs.</div>";
-  }
-  if (call.missing_required.length) {
-    html += "<div class='fail'>Required field(s) " +
-      esc(call.missing_required.join(", ")) +
-      " could not be resolved to anything in this home.</div>";
-  }
-  for (const [field, ids] of Object.entries(call.ambiguous || {})) {
-    html += "<div class='fail'>" + esc(field) + " matched " + ids.length +
-      " things and the current area did not pick one: <code>" +
-      esc(ids.join(", ")) + "</code>. Set an area above, or give them distinct " +
-      "names on the Names page.</div>";
-  }
-  const unresolved = Object.entries(call.unresolved);
-  if (unresolved.length) {
-    html += "<div class='muted'>Dropped (not a known name): " +
-      unresolved.map(([k, v]) => esc(k) + "=" + esc(JSON.stringify(v))).join(", ") +
-      "</div>";
-  }
-  html += renderVariables(call.variables) + "</div>";
-  return html;
-}
-
-async function test() {
-  const text = sentenceEl.value.trim();
-  if (!text) return;
-  testBtn.disabled = true;
-  testStatusEl.textContent = "Recognizing…";
-  resultEl.innerHTML = "";
-  try {
-    const resp = await fetch(testUrl, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        text,
-        language: languageEl.value.trim() || "en",
-        area_id: areaEl ? areaEl.value : ""
-      })
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
-
-    testStatusEl.textContent = data.latency_ms.toFixed(0) + " ms";
-    if (!data.calls.length) {
-      resultEl.innerHTML = "<div class='summary'><div><b>No script matched.</b></div>" +
-        (data.text ? "<div class='muted'>Model said: " + esc(data.text) + "</div>" : "") +
-        "</div>";
-      return;
-    }
-    resultEl.innerHTML = data.calls.map(renderCall).join("");
-  } catch (e) {
-    testStatusEl.textContent = "";
-    resultEl.innerHTML = "<div class='warn'>" + esc(e.message) + "</div>";
-  } finally {
-    testBtn.disabled = false;
-  }
-}
-
-testBtn.addEventListener("click", test);
-sentenceEl.addEventListener("keydown", e => { if (e.key === "Enter") test(); });
-
 // --- Reload from Home Assistant -------------------------------------------
 // Rebuilds the tools from a fresh read, then rebuilds the model prefix.
 const reloadBtn = document.getElementById("reload-btn");
@@ -252,16 +214,179 @@ const reloadUrl = "{{ url_for('reload_from_hass') }}";
 
 reloadBtn.addEventListener("click", async () => {
   reloadBtn.disabled = true;
-  reloadStatus.textContent = "Reading Home Assistant and rebuilding…";
+  reloadStatus.textContent = "Syncing Home Assistant and rebuilding the prompt cache…";
+  beginModelChange("Syncing Home Assistant and rebuilding model context…");
   try {
     const resp = await fetch(reloadUrl, {method: "POST"});
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
     window.location.reload();
   } catch (e) {
+    endModelChange();
     reloadStatus.innerHTML = "<span class='fail'>" + esc(e.message) + "</span>";
     reloadBtn.disabled = false;
   }
+});
+
+// --- Field name details -----------------------------------------------------
+const fieldDialog = document.getElementById("field-dialog");
+const dialogTitle = document.getElementById("dialog-title");
+const dialogDescription = document.getElementById("dialog-description");
+const dialogContent = document.getElementById("dialog-content");
+const dialogStatus = document.getElementById("dialog-status");
+const dialogSave = document.getElementById("dialog-save");
+const fieldDetailsUrl = "{{ url_for('names_field_page') }}";
+const fieldApplyUrl = "{{ url_for('names_field_apply') }}";
+let currentField = null;
+
+function splitNames(value) {
+  return value.split(",").map(name => name.trim()).filter(Boolean);
+}
+
+function closeFieldDialog() {
+  fieldDialog.close();
+  currentField = null;
+}
+
+function refreshFieldDialog() {
+  let changed = 0;
+  for (const input of dialogContent.querySelectorAll(".field-name-input")) {
+    const isChanged = input.value.trim() !== input.dataset.global.trim();
+    input.classList.toggle("changed", isChanged);
+    input.classList.toggle("empty", splitNames(input.value).length === 0);
+    if (isChanged) changed++;
+  }
+  dialogStatus.textContent = changed
+    ? changed + " override(s) will be saved. Saving rebuilds the prompt cache."
+    : "Using the names from the Names page.";
+}
+
+function renderFieldRows(data) {
+  const table = document.createElement("table");
+  table.innerHTML = "<thead><tr><th scope='col'>Home Assistant ID</th><th scope='col'>Names for this field</th><th scope='col'>Actions</th></tr></thead>";
+  const caption = table.createCaption();
+  caption.className = "sr-only";
+  caption.textContent = "Name overrides for " + data.field;
+  const body = document.createElement("tbody");
+  for (const row of data.rows) {
+    const tr = document.createElement("tr");
+    const target = document.createElement("td");
+    target.className = "dialog-target";
+    const code = document.createElement("code");
+    code.textContent = row.id;
+    target.appendChild(code);
+    if (row.overridden) {
+      const badge = document.createElement("span");
+      badge.className = "tag";
+      badge.textContent = "only here";
+      target.appendChild(badge);
+    }
+
+    const names = document.createElement("td");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "field-name-input";
+    input.dataset.id = row.id;
+    input.dataset.global = row.global_names.join(", ");
+    input.value = row.names.join(", ");
+    input.placeholder = "(excluded from this field)";
+    input.setAttribute("aria-label", "Names for " + row.id);
+    input.disabled = !data.can_save;
+    input.addEventListener("input", refreshFieldDialog);
+    names.appendChild(input);
+
+    const action = document.createElement("td");
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "secondary";
+    reset.textContent = "Reset";
+    reset.setAttribute("aria-label", "Reset names for " + row.id);
+    reset.disabled = !data.can_save;
+    reset.addEventListener("click", () => {
+      input.value = input.dataset.global;
+      refreshFieldDialog();
+    });
+    action.appendChild(reset);
+    tr.append(target, names, action);
+    body.appendChild(tr);
+  }
+  table.appendChild(body);
+  const scroll = document.createElement("div");
+  scroll.className = "table-scroll";
+  scroll.appendChild(table);
+  dialogContent.replaceChildren(scroll);
+}
+
+async function openFieldDialog(button) {
+  currentField = {script: button.dataset.script, field: button.dataset.field};
+  dialogTitle.textContent = currentField.field;
+  dialogDescription.textContent = "Loading…";
+  dialogContent.replaceChildren();
+  dialogStatus.textContent = "";
+  dialogSave.disabled = true;
+  fieldDialog.setAttribute("aria-busy", "true");
+  fieldDialog.showModal();
+  try {
+    const url = new URL(fieldDetailsUrl, window.location.href);
+    url.searchParams.set("script", currentField.script);
+    url.searchParams.set("field", currentField.field);
+    url.searchParams.set("format", "json");
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+    dialogTitle.textContent = data.field;
+    dialogDescription.textContent = data.script + " · " + data.friendly_name +
+      " · " + data.kind + " targets";
+    renderFieldRows(data);
+    dialogSave.disabled = !data.can_save;
+    refreshFieldDialog();
+    fieldDialog.removeAttribute("aria-busy");
+    const firstInput = dialogContent.querySelector(".field-name-input");
+    if (firstInput) firstInput.focus();
+  } catch (e) {
+    fieldDialog.removeAttribute("aria-busy");
+    dialogDescription.textContent = "";
+    dialogContent.innerHTML = "<div class='warn'>" + esc(e.message) + "</div>";
+  }
+}
+
+dialogSave.addEventListener("click", async () => {
+  if (!currentField) return;
+  const names = {};
+  for (const input of dialogContent.querySelectorAll(".field-name-input")) {
+    if (input.value.trim() !== input.dataset.global.trim()) {
+      names[input.dataset.id] = splitNames(input.value);
+    }
+  }
+  dialogSave.disabled = true;
+  dialogStatus.textContent = "Saving and rebuilding the prompt cache…";
+  beginModelChange("Saving field names and rebuilding model context…");
+  try {
+    const resp = await fetch(fieldApplyUrl, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({...currentField, names})
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+    window.location.reload();
+  } catch (e) {
+    endModelChange();
+    dialogStatus.innerHTML = "<span class='fail'>" + esc(e.message) + "</span>";
+    dialogSave.disabled = false;
+  }
+});
+
+for (const button of document.querySelectorAll(".details-btn")) {
+  button.addEventListener("click", () => openFieldDialog(button));
+}
+document.getElementById("dialog-close").addEventListener("click", closeFieldDialog);
+document.getElementById("dialog-cancel").addEventListener("click", closeFieldDialog);
+fieldDialog.addEventListener("click", event => {
+  if (event.target === fieldDialog) closeFieldDialog();
+});
+fieldDialog.addEventListener("cancel", () => {
+  currentField = null;
 });
 
 {% if can_save %}
@@ -313,6 +438,7 @@ async function applyChanges() {
   applyBtn.disabled = true;
   resetBtn.disabled = true;
   applyInfo.textContent = "Applying… this can take minutes on slow hardware.";
+  beginModelChange("Applying script targeting and rebuilding model context…");
   try {
     const resp = await fetch(applyUrl, {
       method: "POST",
@@ -324,6 +450,7 @@ async function applyChanges() {
     // Reload so both tables, the tags, and the counts reflect the new state.
     window.location.reload();
   } catch (e) {
+    endModelChange();
     applyInfo.innerHTML = "<span class='fail'>" + esc(e.message) + "</span>";
     applyBtn.disabled = false;
     resetBtn.disabled = false;

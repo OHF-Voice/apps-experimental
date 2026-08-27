@@ -1,6 +1,6 @@
 """Local corrections to what the model is offered, on top of Home Assistant.
 
-Two independent things live here.
+Three independent things live here.
 
 **Which scripts are targeted.** Home Assistant's "expose to voice" is the
 default: a script exposed there is targeted here. Only the deliberate exceptions
@@ -27,6 +27,9 @@ names entirely; an empty list keeps it out of the enums altogether::
 
 Both are keyed by Home Assistant id, so entries can be checked against what
 still exists and dropped when it does not.
+
+**Web settings.** Values changed in the app's web UI are stored under
+``settings`` and override their startup defaults.
 """
 
 import logging
@@ -237,9 +240,16 @@ class Overrides:
 
     scripts: ScriptOverrides = field(default_factory=ScriptOverrides)
     names: NameOverrides = field(default_factory=NameOverrides)
+    max_tokens: Optional[int] = None
 
     def as_dict(self) -> Dict[str, object]:
-        return {**self.scripts.as_dict(), "names": self.names.as_dict()}
+        data: Dict[str, object] = {
+            **self.scripts.as_dict(),
+            "names": self.names.as_dict(),
+        }
+        if self.max_tokens is not None:
+            data["settings"] = {"max_tokens": self.max_tokens}
+        return data
 
 
 def load(path: Optional[Path]) -> Overrides:
@@ -336,7 +346,28 @@ def load(path: Optional[Path]) -> Overrides:
         "Per-script name overrides: %s",
         {s: sorted(f) for s, f in name_overrides.per_script.items()},
     )
-    return Overrides(scripts=script_overrides, names=name_overrides)
+    settings = data.get("settings") or {}
+    max_tokens: Optional[int] = None
+    if isinstance(settings, dict):
+        configured_max_tokens = settings.get("max_tokens")
+        if (
+            isinstance(configured_max_tokens, int)
+            and not isinstance(configured_max_tokens, bool)
+            and configured_max_tokens > 0
+        ):
+            max_tokens = configured_max_tokens
+        elif configured_max_tokens is not None:
+            _LOGGER.warning(
+                "Ignoring invalid max_tokens setting in %s: %r",
+                path,
+                configured_max_tokens,
+            )
+
+    return Overrides(
+        scripts=script_overrides,
+        names=name_overrides,
+        max_tokens=max_tokens,
+    )
 
 
 def prune_all(

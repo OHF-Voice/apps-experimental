@@ -53,8 +53,8 @@ sending them to the LLM.
 - `n_threads`: CPU threads for the model (default: `0`, llama.cpp's own default
   — see [CPU threads](#cpu-threads)).
 - `max_tokens`: maximum tokens the model may generate per command (default:
-  `64`). Raise this only if you expect many tool calls at once, since it also
-  raises the automatic context size.
+  `128`). Complex scripts with many fields need more output tokens. Raising this
+  also raises the automatic context size.
 - `flash_attention`: use llama.cpp flash attention (default: enabled). On a
   Raspberry Pi 5 this reduced median recognition latency by about 3.6% in the
   bundled benchmark. The CPU kernels are already part of llama.cpp, so this
@@ -103,8 +103,9 @@ with Home Assistant, leave a core or two free (for example, set `n_threads` to
 
 Create scripts and [expose][] them to voice by "More Info -> Settings -> Voice
 assistants" and clicking "Expose". You **must** also expose any entities that
-you want to be able to refer to by name (or [alias][aliases]). Restart the app
-after any changes: it reads Home Assistant once, on start.
+you want to be able to refer to by name (or [alias][aliases]). After changing
+scripts, exposure, names, or aliases, use **Sync & rebuild** on the Scripts page
+to pick up the changes without restarting the app.
 
 Give your scripts descriptive names and a description — the description is what
 the model matches a command against, so it matters more than the name. A script
@@ -135,6 +136,11 @@ The following field [selectors][] are supported:
 - Select
 - Text
 - Time
+
+`Text`, `Select`, `Entity`, `Area`, and `Floor` selectors also support Home
+Assistant's `multiple: true` option. Multiple values are passed to the script as
+a list. For name-based fields, every name must resolve unambiguously or the
+entire field is omitted; a required field then prevents the script from running.
 
 ### satellite variable
 
@@ -173,6 +179,10 @@ state can take several minutes. The cache is also rebuilt after a model,
 llama.cpp, context-size, or flash-attention change. If the saved state is
 damaged or cannot be restored, the app rebuilds it automatically.
 
+This rebuild creates a reusable prompt cache; it does not train or fine-tune the
+model. Voice requests received during a rebuild return an error immediately
+instead of being queued and possibly running much later.
+
 ## Tool call caching
 
 If a sentence has been previously recognized, its result will be cached and the
@@ -182,17 +192,15 @@ restarts.
 
 ## Web UI
 
-The **Scripts** page lists every script in Home Assistant, split into the ones
-exposed to voice — the only ones the model is told about and the only ones that
-can run — and the ones that are not, shown with the targeting they would get if
-you exposed them. For each script you see its fields, which of them are
-required, and how many names each field can match (for example, how many entity
-names an `entity` field was filled with).
+The **Scripts** page lists every script in Home Assistant, split into targeted
+scripts—the only ones the model is told about and the only ones that can
+run—and scripts that are not targeted. For each script you see its description,
+fields, which fields are required, and how many names a name-based field can
+match.
 
-The same page has a **tester**: type a command and see which script it would
-run and what variables it would get, without actually running it. This is the
-quickest way to find out why a command misfires. It reports three distinct
-outcomes:
+The **Test** page lets you type a command and see which script it would run and
+what variables it would get, without actually running it. This is the quickest
+way to find out why a command misfires. It reports three distinct outcomes:
 
 - **Would run** — the script and all its variables resolved.
 - **Would not run** — a required field held a name that matches nothing in your
@@ -201,10 +209,20 @@ outcomes:
 - **The model made this name up** — it produced a tool name that is not an
   exposed script. Usually a sign the exposed scripts don't cover what you asked.
 
+A **Run in Home Assistant** button appears for each **Would run** result. It
+executes that exact resolved call once; test results expire after five minutes
+and cannot be reused.
+
 Names and fields that don't resolve are always dropped rather than passed to the
 script, so a script never receives a value it cannot act on. Optional fields
 simply go missing; required fields that are missing, ambiguous, or unresolved
 stop the script from running.
+
+The **Settings** page changes the maximum number of tokens the model may
+generate for one command. The value is saved in `/data/overrides.yaml`, takes
+effect immediately, and grows an automatically sized context when necessary.
+The page also shows the effective model, context size, CPU threads, and flash
+attention setting.
 
 ### Choosing which scripts are targeted
 
@@ -237,12 +255,14 @@ Only the exceptions are stored, never the resulting list, so exposing a new
 script in Home Assistant is picked up without touching this file. Entries naming
 scripts that no longer exist are dropped automatically.
 
-### Reloading from Home Assistant
+### Syncing from Home Assistant
 
-Home Assistant is read once, when the app starts. **Reload from Home Assistant**
-on the Scripts page re-reads it and rebuilds the tools, which is how you pick up
-a newly exposed script, a renamed entity, or a new alias without restarting.
-Like applying any change, it rebuilds the model prefix.
+Home Assistant is read once when the app starts. **Sync & rebuild** on the
+Scripts page re-reads it and rebuilds the tools and prompt cache. Use it to pick
+up a newly exposed script, a renamed entity, or a new alias without restarting.
+Recognition pauses during the rebuild, and incoming requests receive an error
+rather than waiting in a queue. The operation does not train or fine-tune the
+model.
 
 ## Names
 
@@ -253,16 +273,17 @@ model has no way to pick between them.
 
 The **Names** page lists every entity exposed to Assist, plus every area and
 floor, with the names the model may use for each. Edit the comma-separated list
-to change them:
+to change them. Use the search bar to filter by ID, name, alias, or entity type;
+the Entities, Areas, and Floors sections can each be collapsed independently.
 
 - **Add a name** for something people say a different way ("office light" beside
   "Overhead light").
 - **Rename** to disambiguate. If three media players are all called "Media
   Player", the model cannot target any of them reliably; give them distinct
   names.
-- **Clear the box** to keep something out of the enums entirely, so the model can
-  never target it. Good for entities that exist but should not be voice targets,
-  and for noise like "Built-in Audio Analog Stereo".
+- **Uncheck Targetable** to keep something out of the enums entirely, so the
+  model can never target it. Good for entities that exist but should not be
+  voice targets, and for noise like "Built-in Audio Analog Stereo".
 - **Reset** goes back to Home Assistant's own names.
 
 ### Names shared by more than one thing
@@ -282,20 +303,19 @@ acting on whichever one happened to be listed first is worse than not acting.
 If the field was required the script does not run, and the tester says which
 candidates it was torn between. Giving them distinct names here always fixes it.
 
-The Scripts page marks fields whose names are shared, so you can find them
-before a command fails.
+Use **Details** beside a name-based field on the Scripts page to inspect its
+candidates and see which names need disambiguation.
 
 Nothing in Home Assistant is modified — this only changes what this app offers
 the model. If you want a name to work everywhere in Home Assistant, add it as an
-[alias][aliases] there instead and use *Reload from Home Assistant*.
+[alias][aliases] there instead and use **Sync & rebuild**.
 
 ### Names for one script's field
 
-Sometimes a name only needs fixing for one script. The field list on the Scripts
-page has an **Override names for this field** link next to every field that takes
-names, which opens the same editor scoped to that field: it lists exactly that
-field's candidates, after its own domain filter, so the list you are looking at
-is the list that misbehaved.
+Sometimes a name only needs fixing for one script. Select **Details** beside a
+name-based field on the Scripts page to open an editor in a dialog. It lists
+exactly that field's candidates after its domain filter, and lets you override
+or exclude names without leaving the Scripts page.
 
 Names set there beat the ones on the Names page, for that field only. Everything
 else keeps using the global names. Clearing a box excludes that thing from *this*

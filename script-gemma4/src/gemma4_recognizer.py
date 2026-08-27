@@ -24,6 +24,7 @@ TOOL_CALL_RE = re.compile(
 TOOL_ARGS = Dict[str, Any]
 TOOL_CALL = Tuple[str, TOOL_ARGS]
 MODEL_RESPONSE = Tuple[List[TOOL_CALL], str]
+DEFAULT_MAX_TOKENS = 128
 
 
 DEFAULT_REPO = "ggml-org/gemma-4-E2B-it-GGUF"
@@ -49,7 +50,7 @@ class Gemma4Recognizer:
         n_ctx: Optional[int] = None,
         n_ctx_overhead: int = 128,
         n_threads: Optional[int] = None,
-        max_tokens: int = 64,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
         flash_attn: bool = True,
         debug: bool = False,
     ) -> None:
@@ -263,6 +264,59 @@ class Gemma4Recognizer:
         self.ready = True
         _LOGGER.info("Now using %s tool(s)", len(new_tools))
 
+    def set_max_tokens(self, max_tokens: int) -> None:
+        """Change the generation limit, growing an automatic context if needed.
+
+        Must be called on the same single thread that serves recognition.
+        """
+        assert self.llm, "Not loaded"
+        assert self.tools is not None, "Not loaded"
+        if max_tokens <= 0:
+            raise ValueError("Maximum tokens must be greater than zero")
+        if max_tokens == self.max_tokens:
+            return
+
+        old_max_tokens = self.max_tokens
+        self.max_tokens = max_tokens
+        needed_n_ctx = self.required_n_ctx(self.tools)
+        if (self.n_ctx is not None) and (needed_n_ctx > self.llm.n_ctx()):
+            self.max_tokens = old_max_tokens
+            raise ValueError(
+                f"Maximum tokens {max_tokens} needs at least {needed_n_ctx} context "
+                f"tokens, but the fixed context is {self.llm.n_ctx()}"
+            )
+
+        grow_context = (self.n_ctx is None) and (needed_n_ctx > self.llm.n_ctx())
+        if not grow_context:
+            if self.cache is not None:
+                self.cache.clear()
+            _LOGGER.info("Maximum generation tokens set to %s", max_tokens)
+            return
+
+        old_llm = self.llm
+        live_state = old_llm.save_state()
+        self.ready = False
+        try:
+            _LOGGER.info(
+                "Growing context from %s to %s token(s) for max_tokens=%s",
+                self.llm.n_ctx(),
+                needed_n_ctx,
+                max_tokens,
+            )
+            self._create_llm(needed_n_ctx)
+            self._restore_or_build_state()
+        except Exception:
+            self.max_tokens = old_max_tokens
+            self.llm = old_llm
+            self.llm.load_state(live_state)
+            self.ready = True
+            raise
+
+        if self.cache is not None:
+            self.cache.clear()
+        self.ready = True
+        _LOGGER.info("Maximum generation tokens set to %s", max_tokens)
+
     def get_tool_calls(self, text: str, language: str = "en") -> MODEL_RESPONSE:
         assert self.llm, "Not loaded"
 
@@ -298,7 +352,17 @@ class Gemma4Recognizer:
         end_time = time.monotonic()
         _LOGGER.debug("Response in %s second(s): %s", end_time - start_time, response)
 
-        content = response["choices"][0]["message"]["content"] or ""
+        choice = response["choices"][0]
+        content = choice["message"]["content"] or ""
+        if choice.get("finish_reason") == "length":
+            message = (
+                f"Model response exceeded the {self.max_tokens}-token generation "
+                "limit. Increase the Maximum tokens option for scripts with many "
+                "arguments."
+            )
+            _LOGGER.warning("%s Partial response: %s", message, content)
+            return [], message
+
         model_response = (_parse_tool_calls(content), content)
         if self.cache is not None:
             _LOGGER.debug("Caching '%s' -> %s", cache_key, model_response)

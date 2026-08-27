@@ -15,6 +15,9 @@ from overrides import AREA, ENTITY, FLOOR, NameOverrides
 _LOGGER = logging.getLogger(__name__)
 
 SEARCH_MEDIA = 4194304  # MediaPlayerEntityFeature
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
+WEBSOCKET_RECEIVE_TIMEOUT = 30.0
+MULTIPLE_SELECTORS = {"area", "entity", "floor", "select", "text"}
 
 
 class HomeAssistantError(Exception):
@@ -73,6 +76,45 @@ def _apply_satellite_registry_info(
         satellite_info.area_id = devices.get(satellite_info.device_id, {}).get(
             "area_id"
         )
+
+
+def _get_entity_filter_domains(
+    entity_selector: Dict[str, Any],
+) -> Optional[Set[str]]:
+    """Get domains from either Home Assistant entity filter representation."""
+    entity_filters = entity_selector.get("filter")
+    if not entity_filters:
+        return None
+
+    if isinstance(entity_filters, dict):
+        entity_filter = entity_filters
+    else:
+        entity_filter = entity_filters[0]
+
+    filter_domains = entity_filter.get("domain")
+    if isinstance(filter_domains, str):
+        return {filter_domains}
+    if filter_domains is not None:
+        return set(filter_domains)
+
+    return None
+
+
+def _get_select_options(select_selector: Dict[str, Any]) -> List[Any]:
+    """Get the submitted values from plain or labelled select options."""
+    return [
+        option.get("value") if isinstance(option, dict) else option
+        for option in select_selector.get("options", [])
+    ]
+
+
+def _multiple_property(item_property: Dict[str, Any]) -> Dict[str, Any]:
+    """Wrap one selector value as a unique array of values."""
+    return {
+        "type": "array",
+        "items": item_property,
+        "uniqueItems": True,
+    }
 
 
 @dataclass
@@ -145,9 +187,11 @@ class HomeAssistant:
             current_id += 1
             return current_id
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=HTTP_TIMEOUT) as session:
             async with session.ws_connect(
-                self.websocket_api_url, max_msg_size=0
+                self.websocket_api_url,
+                max_msg_size=0,
+                receive_timeout=WEBSOCKET_RECEIVE_TIMEOUT,
             ) as websocket:
                 # Authenticate
                 msg = await websocket.receive_json()
@@ -343,6 +387,38 @@ class HomeAssistant:
 
         return descriptions
 
+    async def _get_script_configs(
+        self, websocket, next_id, script_ids: Set[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Get the full configuration exposed by each script entity."""
+        configs: Dict[str, Dict[str, Any]] = {}
+        for script_id in sorted(script_ids):
+            await websocket.send_json(
+                {
+                    "id": next_id(),
+                    "type": "script/config",
+                    "entity_id": f"script.{script_id}",
+                }
+            )
+            msg = await websocket.receive_json()
+            if not msg.get("success"):
+                error = msg.get("error") or {}
+                _LOGGER.debug(
+                    "Could not get config for script %s: %s",
+                    script_id,
+                    error,
+                )
+                if error.get("code") == "unknown_command":
+                    break
+
+                continue
+
+            config = (msg.get("result") or {}).get("config")
+            if config:
+                configs[script_id] = config
+
+        return configs
+
     async def _get_script_blueprint_paths(
         self, session: aiohttp.ClientSession, script_ids: Set[str]
     ) -> Dict[str, str]:
@@ -438,9 +514,11 @@ class HomeAssistant:
             current_id += 1
             return current_id
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=HTTP_TIMEOUT) as session:
             async with session.ws_connect(
-                self.websocket_api_url, max_msg_size=0
+                self.websocket_api_url,
+                max_msg_size=0,
+                receive_timeout=WEBSOCKET_RECEIVE_TIMEOUT,
             ) as websocket:
                 # Authenticate
                 msg = await websocket.receive_json()
@@ -506,6 +584,21 @@ class HomeAssistant:
                 assert msg["success"], msg
 
                 scripts = msg["result"].get("script") or {}
+
+                # Newer Home Assistant versions no longer include individual
+                # scripts in get_services. script/config is the authoritative
+                # source for aliases, descriptions, and fields.
+                script_configs = await self._get_script_configs(
+                    websocket, next_id, set(script_names)
+                )
+                for script_id, config in script_configs.items():
+                    script = dict(scripts.get(script_id) or {})
+                    if config.get("alias"):
+                        script["name"] = config["alias"]
+                    for config_key in ("description", "fields"):
+                        if config_key in config:
+                            script[config_key] = config[config_key]
+                    scripts[script_id] = script
 
                 # A script built from a blueprint reports an empty description,
                 # so fall back to the blueprint's own description. Without this
@@ -587,6 +680,8 @@ class HomeAssistant:
 
                         selector = field_info.get("selector")
                         if selector:
+                            selector_type = next(iter(selector), "")
+                            selector_config = selector.get(selector_type) or {}
                             if "text" in selector:
                                 pass  # already a string
                             elif "number" in selector:
@@ -605,7 +700,9 @@ class HomeAssistant:
                             elif "boolean" in selector:
                                 field_prop["type"] = "boolean"
                             elif "select" in selector:
-                                field_prop["enum"] = selector["select"]["options"]
+                                field_prop["enum"] = _get_select_options(
+                                    selector_config
+                                )
                             elif "date" in selector:
                                 field_prop["format"] = "date"
                                 field_description += f"\nDate in YYYY-MM-DD format. The current year is {now.year}"
@@ -666,14 +763,9 @@ class HomeAssistant:
                                     target_id for target_id, _ in floor_targets
                                 ]
                             elif ("entity" in selector) and info.entities:
-                                entity_filters = selector["entity"].get("filter", [])
-                                filter_domains: Optional[Set[str]] = None
-                                if entity_filters:
-                                    filter_domains = entity_filters[0].get("domain")
-                                    if isinstance(filter_domains, str):
-                                        filter_domains = {filter_domains}
-                                    elif filter_domains is not None:
-                                        filter_domains = set(filter_domains)
+                                filter_domains = _get_entity_filter_domains(
+                                    selector["entity"]
+                                )
 
                                 entity_targets = [
                                     (entity.entity_id, list(entity.names))
@@ -690,6 +782,13 @@ class HomeAssistant:
                                 tool.field_targets[field_key] = [
                                     target_id for target_id, _ in entity_targets
                                 ]
+
+                            if (
+                                selector_type in MULTIPLE_SELECTORS
+                                and selector_config.get("multiple")
+                            ):
+                                field_prop = _multiple_property(field_prop)
+                                props[field_key] = field_prop
 
                         if field_description:
                             field_prop["description"] = field_description.strip()
@@ -713,9 +812,11 @@ class HomeAssistant:
         areas: Dict[str, Area] = {}
         floors: Dict[str, Floor] = {}
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=HTTP_TIMEOUT) as session:
             async with session.ws_connect(
-                self.websocket_api_url, max_msg_size=0
+                self.websocket_api_url,
+                max_msg_size=0,
+                receive_timeout=WEBSOCKET_RECEIVE_TIMEOUT,
             ) as websocket:
                 # Authenticate
                 msg = await websocket.receive_json()
@@ -892,9 +993,11 @@ class HomeAssistant:
             current_id += 1
             return current_id
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=HTTP_TIMEOUT) as session:
             async with session.ws_connect(
-                self.websocket_api_url, max_msg_size=0
+                self.websocket_api_url,
+                max_msg_size=0,
+                receive_timeout=WEBSOCKET_RECEIVE_TIMEOUT,
             ) as websocket:
                 # Authenticate
                 msg = await websocket.receive_json()

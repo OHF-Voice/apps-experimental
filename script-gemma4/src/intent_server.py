@@ -21,6 +21,10 @@ _LOGGER = logging.getLogger(__name__)
 # command open indefinitely if Home Assistant's registry API stalls.
 SATELLITE_TIMEOUT = 10.0
 SERVICE_CALL_TIMEOUT = 10.0
+MODEL_REBUILDING_TEXT = (
+    "The script agent is loading or rebuilding its model cache. "
+    "Please try again shortly."
+)
 
 
 async def _wait_for_service_calls(
@@ -98,6 +102,17 @@ class Gemma4EventHandler(AsyncEventHandler):
             _LOGGER.debug("Handling: %s", transcript)
 
             try:
+                if self.state.model_rebuilding.is_set() or (
+                    not self.state.recognizer.ready
+                ):
+                    await self.write_event(
+                        Error(
+                            text=MODEL_REBUILDING_TEXT,
+                            code="model-rebuilding",
+                        ).event()
+                    )
+                    return True
+
                 language = transcript.language or "en"
                 satellite_info: Optional[SatelliteInfo] = None
                 satellite_info_task: Optional[asyncio.Task] = None
@@ -109,13 +124,24 @@ class Gemma4EventHandler(AsyncEventHandler):
                             self.state.hass.get_satellite_info(device_id, satellite_id)
                         )
 
-                    loop = asyncio.get_running_loop()
-                    tool_calls, response_text = await loop.run_in_executor(
-                        self.state.llama_executor,
+                    model_future = self.state.llama_executor.submit(
                         self.state.recognizer.get_tool_calls,
                         transcript.text,
                         language,
                     )
+                    # Close the small cross-thread race between the check above
+                    # and a rebuild being queued. A queued recognition can still
+                    # be cancelled; one already running will finish first.
+                    if self.state.model_rebuilding.is_set() and model_future.cancel():
+                        await self.write_event(
+                            Error(
+                                text=MODEL_REBUILDING_TEXT,
+                                code="model-rebuilding",
+                            ).event()
+                        )
+                        return True
+
+                    tool_calls, response_text = await asyncio.wrap_future(model_future)
                     if not tool_calls:
                         await self.write_event(
                             NotHandled(

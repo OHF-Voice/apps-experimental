@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import logging
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -21,12 +22,32 @@ from tool_mapping import map_tool_call, required_fields
 _LOGGER = logging.getLogger(__name__)
 
 MAX_PASSES = 10
+MIN_MAX_TOKENS = 16
+MAX_MAX_TOKENS = 512
+PENDING_RUN_TTL = 300.0
+MAX_PENDING_RUNS = 100
+SCRIPT_CALL_TIMEOUT = 30.0
 
 # Names shown per enum field before collapsing into "+N more".
 ENUM_SAMPLE = 5
 
 # Seconds to wait for Home Assistant when re-reading it.
 HASS_TIMEOUT = 60.0
+
+
+def _call_script(state: AppState, script_id: str, variables: Dict[str, Any]) -> None:
+    """Call a script from the web thread on the app's event loop."""
+    if state.loop is None:
+        raise RuntimeError("Home Assistant event loop is unavailable")
+
+    service_call = state.hass.call_service(
+        "script",
+        "turn_on",
+        service_data={"variables": variables},
+        target={"entity_id": script_id},
+    )
+    future = asyncio.run_coroutine_threadsafe(service_call, state.loop)
+    future.result(timeout=SCRIPT_CALL_TIMEOUT)
 
 
 def _apply_candidate(
@@ -49,8 +70,13 @@ def _apply_candidate(
         state.all_tools = all_tools
         state.set_targeted(targeted)
 
-    future = state.llama_executor.submit(reload_and_commit)
-    future.result()
+    state.model_rebuilding.set()
+    try:
+        future = state.llama_executor.submit(reload_and_commit)
+        future.result()
+    finally:
+        state.model_rebuilding.clear()
+
     if state.overrides_path is not None:
         overrides.save(state.overrides_path, state.overrides)
 
@@ -98,7 +124,10 @@ def _describe_fields(tool: Tool, names: NameOverrides) -> List[Dict[str, Any]]:
     fields: List[Dict[str, Any]] = []
     for field_name, schema in sorted(props.items()):
         schema = schema or {}
-        enum = schema.get("enum") or []
+        value_schema = (
+            schema.get("items") or {} if schema.get("type") == "array" else schema
+        )
+        enum = value_schema.get("enum") or []
         name_map = tool.name_map.get(field_name) or {}
         # Names that refer to more than one thing. The satellite's area can often
         # narrow one down at recognition time, but not always, so they are worth
@@ -108,7 +137,7 @@ def _describe_fields(tool: Tool, names: NameOverrides) -> List[Dict[str, Any]]:
             {
                 "name": field_name,
                 "type": schema.get("type", "string"),
-                "format": schema.get("format"),
+                "format": value_schema.get("format"),
                 "required": field_name in required,
                 "enum_count": len(enum),
                 "enum_sample": ", ".join(str(value) for value in enum[:ENUM_SAMPLE]),
@@ -164,6 +193,27 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
         fixture_error = f"Could not load benchmark fixture: {err}"
         _LOGGER.warning(fixture_error)
 
+    pending_runs: Dict[str, tuple[float, str, Dict[str, Any]]] = {}
+    pending_runs_lock = threading.Lock()
+
+    def issue_run_token(script_id: str, variables: Dict[str, Any]) -> str:
+        """Keep a resolved call server-side and return its opaque handle."""
+        now = time.monotonic()
+        token = secrets.token_urlsafe(24)
+        with pending_runs_lock:
+            expired = [
+                run_id
+                for run_id, (created, _, _) in pending_runs.items()
+                if (now - created) > PENDING_RUN_TTL
+            ]
+            for run_id in expired:
+                del pending_runs[run_id]
+            if len(pending_runs) >= MAX_PENDING_RUNS:
+                oldest = min(pending_runs, key=lambda run_id: pending_runs[run_id][0])
+                del pending_runs[oldest]
+            pending_runs[token] = (now, script_id, copy.deepcopy(variables))
+        return token
+
     @flask_app.context_processor
     def inject_url_for():
         return dict(url_for=url_for)  # pylint: disable=use-dict-literal
@@ -188,6 +238,91 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
             can_save=state.overrides_path is not None,
             areas=areas,
         )
+
+    @flask_app.route("/test", methods=["GET"])
+    def test_page():
+        """Show the interactive sentence tester."""
+        areas = sorted(
+            ({"id": a.area_id, "name": a.name} for a in state.hass_info.areas.values()),
+            key=lambda a: a["name"],
+        )
+        return render_template("test.html", areas=areas)
+
+    @flask_app.route("/settings", methods=["GET"])
+    def settings_page():
+        """Show runtime model information and editable recognition settings."""
+        model = state.recognizer.describe()
+        return render_template(
+            "settings.html",
+            model=model,
+            context_mode="fixed" if state.recognizer.n_ctx is not None else "automatic",
+            max_tokens_source=(
+                "web setting"
+                if state.overrides.max_tokens is not None
+                else "app startup option"
+            ),
+            can_save=state.overrides_path is not None,
+            min_max_tokens=MIN_MAX_TOKENS,
+            max_max_tokens=MAX_MAX_TOKENS,
+        )
+
+    @flask_app.route("/settings", methods=["POST"])
+    def settings_apply():
+        """Apply and persist the maximum generation length."""
+        if state.overrides_path is None:
+            return jsonify({"error": "No settings file is configured"}), 503
+        if not state.recognizer.ready:
+            return jsonify({"error": "Model is still loading"}), 503
+
+        body = request.get_json(silent=True) or {}
+        max_tokens = body.get("max_tokens")
+        if (
+            not isinstance(max_tokens, int)
+            or isinstance(max_tokens, bool)
+            or not (MIN_MAX_TOKENS <= max_tokens <= MAX_MAX_TOKENS)
+        ):
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            f"Maximum tokens must be an integer from "
+                            f"{MIN_MAX_TOKENS} to {MAX_MAX_TOKENS}"
+                        )
+                    }
+                ),
+                400,
+            )
+
+        if not state.reload_lock.acquire(blocking=False):
+            return jsonify({"error": "Already applying a change"}), 409
+
+        old_max_tokens = state.recognizer.max_tokens
+        candidate_overrides = copy.deepcopy(state.overrides)
+        candidate_overrides.max_tokens = max_tokens
+        state.model_rebuilding.set()
+        try:
+            future = state.llama_executor.submit(
+                state.recognizer.set_max_tokens, max_tokens
+            )
+            future.result()
+            try:
+                overrides.save(state.overrides_path, candidate_overrides)
+            except Exception:
+                # Keep the persisted and effective values aligned if writing fails.
+                rollback = state.llama_executor.submit(
+                    state.recognizer.set_max_tokens, old_max_tokens
+                )
+                rollback.result()
+                raise
+            state.overrides = candidate_overrides
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.exception("Failed to apply maximum tokens")
+            return jsonify({"error": f"Could not apply setting: {err}"}), 500
+        finally:
+            state.model_rebuilding.clear()
+            state.reload_lock.release()
+
+        return jsonify(state.recognizer.describe())
 
     def _fetch_from_hass(
         candidate_overrides: overrides.Overrides,
@@ -399,17 +534,23 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
                 continue
 
             call = map_tool_call(tool, tool_args, satellite, state.geometry)
-            calls.append(
-                {
-                    "script_id": call.script_id,
-                    "unknown_tool": False,
-                    "can_run": call.can_run,
-                    "variables": call.variables,
-                    "unresolved": call.unresolved,
-                    "ambiguous": call.ambiguous,
-                    "missing_required": call.missing_required,
-                }
-            )
+            call_info = {
+                "script_id": call.script_id,
+                "unknown_tool": False,
+                "can_run": call.can_run,
+                "variables": call.variables,
+                "unresolved": call.unresolved,
+                "ambiguous": call.ambiguous,
+                "missing_required": call.missing_required,
+            }
+            if call.can_run:
+                variables = dict(call.variables)
+                if satellite is not None:
+                    satellite_info = satellite.as_dict()
+                    satellite_info["language"] = language
+                    variables["satellite"] = satellite_info
+                call_info["run_id"] = issue_run_token(call.script_id, variables)
+            calls.append(call_info)
 
         return jsonify(
             {
@@ -418,6 +559,35 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
                 "calls": calls,
             }
         )
+
+    @flask_app.route("/test/run", methods=["POST"])
+    def test_run():
+        """Run one resolved test result exactly once."""
+        body = request.get_json(silent=True) or {}
+        run_id = body.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            return jsonify({"error": "No test run given"}), 400
+        if state.model_rebuilding.is_set():
+            return jsonify({"error": "Model configuration is changing"}), 409
+
+        now = time.monotonic()
+        with pending_runs_lock:
+            pending = pending_runs.pop(run_id, None)
+        if pending is None or (now - pending[0]) > PENDING_RUN_TTL:
+            return jsonify({"error": "This test result expired; test it again"}), 404
+
+        _, script_id, variables = pending
+        tool_id = script_id.removeprefix("script.")
+        if tool_id not in state.tools:
+            return jsonify({"error": "This script is no longer targeted"}), 409
+
+        try:
+            _call_script(state, script_id, variables)
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.exception("Failed to run tested script %s", script_id)
+            return jsonify({"error": f"Could not run {script_id}: {err}"}), 502
+
+        return jsonify({"script_id": script_id})
 
     def _name_rows() -> Dict[str, List[Dict[str, Any]]]:
         """Every nameable target, with the names the model is currently offered.
@@ -436,7 +606,7 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
                 "default_names": default_names,
                 "names": current,
                 "overridden": names.is_overridden(kind, target_id),
-                "excluded": names.is_overridden(kind, target_id) and not current,
+                "excluded": not current,
                 "extra": extra,
             }
 
@@ -486,6 +656,8 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
         field_key = str(request.args.get("field") or "")
         tool = next((t for t in state.all_tools if t.name == script_name), None)
         if (tool is None) or (field_key not in tool.field_kinds):
+            if request.args.get("format") == "json":
+                return jsonify({"error": "Unknown script field"}), 404
             return (
                 render_template(
                     "names_field.html", tool=None, script=script_name, field=field_key
@@ -514,14 +686,28 @@ def make_web_server(state: AppState, benchmark_fixture_path: Union[str, Path]) -
                 }
             )
 
+        rows = sorted(rows, key=lambda r: str(r["id"]))
+        can_save = state.overrides_path is not None
+        if request.args.get("format") == "json":
+            return jsonify(
+                {
+                    "script": script_name,
+                    "friendly_name": tool.friendly_name,
+                    "field": field_key,
+                    "kind": kind,
+                    "rows": rows,
+                    "can_save": can_save,
+                }
+            )
+
         return render_template(
             "names_field.html",
             tool=tool,
             script=script_name,
             field=field_key,
             kind=kind,
-            rows=sorted(rows, key=lambda r: str(r["id"])),
-            can_save=state.overrides_path is not None,
+            rows=rows,
+            can_save=can_save,
         )
 
     @flask_app.route("/names/field", methods=["POST"])

@@ -23,9 +23,10 @@ from gemma4_recognizer import (  # noqa: E402
 
 
 class _FakeLlama:
-    def __init__(self, n_ctx=64, load_error=None):
+    def __init__(self, n_ctx=64, load_error=None, response=None):
         self._n_ctx = n_ctx
         self.load_error = load_error
+        self.response = response
         self.create_calls = 0
         self.loaded_states = []
 
@@ -34,7 +35,7 @@ class _FakeLlama:
 
     def create_chat_completion(self, **kwargs):
         self.create_calls += 1
-        return {}
+        return self.response or {}
 
     def save_state(self):
         return {"state": "good"}
@@ -60,6 +61,93 @@ class ToolCallParserTests(unittest.TestCase):
         text = "<|tool_call>call:demo{broken}<tool_call|>"
 
         self.assertEqual([], _parse_tool_calls(text))
+
+
+class RecognitionTests(unittest.TestCase):
+    def test_truncated_response_is_not_partially_executed(self):
+        recognizer = Gemma4Recognizer(state_path="unused.bin", max_tokens=64)
+        recognizer.tools = [{"type": "function", "function": {"name": "demo"}}]
+        recognizer.llm = _FakeLlama(
+            response={
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {
+                            "content": (
+                                "<|tool_call>call:demo{message:<|'|>partial<|'|>}"
+                                "<tool_call|><|tool_call>call:other{value:"
+                            )
+                        },
+                    }
+                ]
+            }
+        )
+
+        calls, text = recognizer.get_tool_calls("test")
+
+        self.assertEqual([], calls)
+        self.assertIn("64-token generation limit", text)
+
+
+class RuntimeSettingsTests(unittest.TestCase):
+    def test_max_tokens_grows_automatic_context(self):
+        recognizer = Gemma4Recognizer(
+            state_path="unused.bin", max_tokens=64, n_ctx=None
+        )
+        recognizer.tools = [{"type": "function", "function": {"name": "demo"}}]
+        recognizer.llm = _FakeLlama(n_ctx=64)
+        recognizer.ready = True
+
+        def create_larger(n_ctx):
+            recognizer.llm = _FakeLlama(n_ctx=n_ctx)
+
+        with patch.object(recognizer, "required_n_ctx", return_value=128), patch.object(
+            recognizer, "_create_llm", side_effect=create_larger
+        ), patch.object(recognizer, "_restore_or_build_state") as restore:
+            recognizer.set_max_tokens(128)
+
+        self.assertEqual(128, recognizer.max_tokens)
+        self.assertEqual(128, recognizer.llm.n_ctx())
+        self.assertTrue(recognizer.ready)
+        restore.assert_called_once_with()
+
+    def test_max_tokens_rolls_back_when_context_growth_fails(self):
+        recognizer = Gemma4Recognizer(
+            state_path="unused.bin", max_tokens=64, n_ctx=None
+        )
+        recognizer.tools = [{"type": "function", "function": {"name": "demo"}}]
+        old_llm = _FakeLlama(n_ctx=64)
+        recognizer.llm = old_llm
+        recognizer.ready = True
+
+        def create_larger(n_ctx):
+            recognizer.llm = _FakeLlama(n_ctx=n_ctx)
+
+        with patch.object(recognizer, "required_n_ctx", return_value=128), patch.object(
+            recognizer, "_create_llm", side_effect=create_larger
+        ), patch.object(
+            recognizer,
+            "_restore_or_build_state",
+            side_effect=RuntimeError("prefix failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "prefix failed"):
+                recognizer.set_max_tokens(128)
+
+        self.assertEqual(64, recognizer.max_tokens)
+        self.assertIs(old_llm, recognizer.llm)
+        self.assertEqual([{"state": "good"}], old_llm.loaded_states)
+        self.assertTrue(recognizer.ready)
+
+    def test_fixed_context_rejects_token_limit_that_will_not_fit(self):
+        recognizer = Gemma4Recognizer(state_path="unused.bin", max_tokens=64, n_ctx=64)
+        recognizer.tools = [{"type": "function", "function": {"name": "demo"}}]
+        recognizer.llm = _FakeLlama(n_ctx=64)
+
+        with patch.object(recognizer, "required_n_ctx", return_value=128):
+            with self.assertRaisesRegex(ValueError, "fixed context is 64"):
+                recognizer.set_max_tokens(128)
+
+        self.assertEqual(64, recognizer.max_tokens)
 
 
 class StateCacheTests(unittest.TestCase):

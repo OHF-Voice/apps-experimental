@@ -118,6 +118,49 @@ def _narrow(
     return candidates
 
 
+def _matches_type(value: Any, expected_type: Optional[str]) -> bool:
+    """Check the JSON scalar types used by selector array items."""
+    if expected_type == "string":
+        return isinstance(value, str)
+    if expected_type == "boolean":
+        return isinstance(value, bool)
+    if expected_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected_type == "object":
+        return isinstance(value, dict)
+    if expected_type == "array":
+        return isinstance(value, list)
+    return True
+
+
+def _valid_array(schema: Dict[str, Any], value: Any) -> bool:
+    """Validate array shape and item constraints before calling a script."""
+    if not isinstance(value, list):
+        return False
+
+    min_items = schema.get("minItems")
+    if (min_items is not None) and (len(value) < min_items):
+        return False
+    max_items = schema.get("maxItems")
+    if (max_items is not None) and (len(value) > max_items):
+        return False
+
+    item_schema = schema.get("items") or {}
+    expected_type = item_schema.get("type")
+    allowed = item_schema.get("enum")
+    for item_index, item in enumerate(value):
+        if not _matches_type(item, expected_type):
+            return False
+        if (allowed is not None) and (item not in allowed):
+            return False
+        if schema.get("uniqueItems") and (item in value[:item_index]):
+            return False
+
+    return True
+
+
 def map_tool_call(
     tool: Tool,
     tool_args: Dict[str, Any],
@@ -151,11 +194,77 @@ def map_tool_call(
             )
             continue
 
+        field_schema = properties[var_key]
+        expects_array = field_schema.get("type") == "array"
+
         # An enum and its name map are always generated together, so an empty
         # map means this field is not name-mapped at all.
         name_map = tool.name_map.get(var_key)
         if not name_map:
+            if expects_array and not _valid_array(field_schema, var_value):
+                _LOGGER.warning(
+                    "Dropping malformed array field %s=%r from tool %s",
+                    var_key,
+                    var_value,
+                    tool.name,
+                )
+                call.unresolved[var_key] = var_value
+                continue
             call.variables[var_key] = var_value
+            continue
+
+        if expects_array:
+            if not isinstance(var_value, list):
+                _LOGGER.warning(
+                    "Dropping scalar value for array field %s=%r from tool %s",
+                    var_key,
+                    var_value,
+                    tool.name,
+                )
+                call.unresolved[var_key] = var_value
+                continue
+
+            mapped_values: List[str] = []
+            unresolved_values: List[Any] = []
+            ambiguous_values: List[str] = []
+            for item in var_value:
+                try:
+                    candidates = name_map.get(item)
+                except TypeError:
+                    candidates = None
+                if not candidates:
+                    unresolved_values.append(item)
+                    continue
+
+                narrowed = _narrow(sorted(candidates), satellite, geometry)
+                if len(narrowed) > 1:
+                    ambiguous_values.extend(narrowed)
+                    continue
+
+                mapped_value = narrowed[0]
+                if mapped_value not in mapped_values:
+                    mapped_values.append(mapped_value)
+
+            if unresolved_values:
+                _LOGGER.debug(
+                    "No mapping for %s=%r in tool %s",
+                    var_key,
+                    unresolved_values,
+                    tool.name,
+                )
+                call.unresolved[var_key] = unresolved_values
+            if ambiguous_values:
+                _LOGGER.warning(
+                    "%s in tool %s contains ambiguous names referring to: %s",
+                    var_key,
+                    tool.name,
+                    ambiguous_values,
+                )
+                call.ambiguous[var_key] = sorted(set(ambiguous_values))
+            if unresolved_values or ambiguous_values:
+                continue
+
+            call.variables[var_key] = mapped_values
             continue
 
         try:

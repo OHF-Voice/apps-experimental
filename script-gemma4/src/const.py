@@ -35,6 +35,9 @@ class AppState:
     overrides_path: Optional[Path] = None
     # Held while the tool set is being swapped, so two applies cannot overlap.
     reload_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Set before a model-prefix rebuild is queued. Voice requests use this to
+    # fail immediately instead of waiting behind a rebuild and running later.
+    model_rebuilding: threading.Event = field(default_factory=threading.Event)
     # The app's event loop, so the web thread can re-read Home Assistant.
     loop: Optional[asyncio.AbstractEventLoop] = None
     # Where things are, for picking between things that share a name.
