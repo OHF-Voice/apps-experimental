@@ -22,8 +22,8 @@ Expect things to be unpolished!
 
 ## Conversation Agents
 
-- [script-gemma4](script-gemma4/DOCS.md) - [conversation agent][conversation] app that runs Home Assistant [scripts][] with [Gemma 4][gemma4]
-    - Runs on the CPU with [llama.cpp][]; needs scripts written for it
+- [script-agent](script-agent/DOCS.md) - Local [conversation agent][conversation] app that runs Home Assistant [scripts][]
+    - Runs on the CPU with [llama.cpp][] and currently defaults to [Gemma 4][gemma4]; needs scripts written for it
 
 ## Wake Word Detection
 
