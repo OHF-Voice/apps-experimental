@@ -1,0 +1,117 @@
+# Lists (Spanish), as the English library's todo.yaml.
+title: Lists
+icon: mdi:format-list-checks
+
+commands:
+  shopping_list_add:
+    title: Add to the shopping list
+    icon: mdi:cart-plus
+    description: añadir algo a la lista de la compra
+    require: [[añade, agrega, pon, apunta, mete], [lista de la compra, lista de compras, lista]]
+    optional: [[a, en]]
+    exclude: [tareas, pendientes]
+    wildcard:
+      slot: item
+      after: [añade, agrega, pon, apunta, mete]
+      before: [a, en]
+      bounded: true
+      max_words: 8
+    home: shopping_list
+    # Each item said ("oranges and bananas": two), unless the list has one
+    # called that whole ("mac and cheese"); one the list has already isn't
+    # added again (already_on_list).
+    adds_to_list: {slot: item, list: entity, each: true}
+    action:
+      # What isn't on the list is added; what was checked off is checked back on.
+      - repeat:
+          for_each: "{{ items }}"
+          sequence:
+            - action: todo.add_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+      - repeat:
+          for_each: "{{ back }}"
+          sequence:
+            - action: todo.update_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+                status: needs_action
+    verbosity: specific
+    response:
+      done:
+        brief: Añadido a la lista de la compra.
+        specific: "He añadido {{ slots.item }} a la lista de la compra."
+
+  shopping_list_remove:
+    title: Take off the shopping list
+    icon: mdi:cart-minus
+    description: quitar algo de la lista de la compra
+    require: [[quita, borra, elimina, tacha, saca], [lista de la compra, lista de compras, lista]]
+    optional: [[de, del]]
+    exclude: [tareas, pendientes]
+    wildcard:
+      slot: item
+      after: [quita, borra, elimina, tacha, saca]
+      before: [de, del]
+      bounded: true
+      max_words: 5
+    home: shopping_list
+    action:
+      action: todo.remove_item
+      target:
+        entity_id: "{{ slots.entity }}"
+      data:
+        item: "{{ slots.item }}"
+    verbosity: specific
+    response:
+      done:
+        brief: Quitado de la lista de la compra.
+        specific: "He quitado {{ slots.item }} de la lista de la compra."
+
+  todo_add:
+    title: Add to the to-do list
+    icon: mdi:format-list-checks
+    description: añadir algo a la lista de tareas
+    require: [[añade, agrega, pon, apunta], [lista de tareas, lista de pendientes, tareas, pendientes]]
+    optional: [[a, en]]
+    wildcard:
+      slot: item
+      after: [añade, agrega, pon, apunta]
+      before: [a, en]
+      bounded: true
+      max_words: 8
+    home: todo_list
+    # The whole of it: one the list has already isn't added again
+    # (already_on_list).
+    adds_to_list: {slot: item, list: entity}
+    action:
+      # What isn't on the list is added; what was checked off is checked back on.
+      - repeat:
+          for_each: "{{ items }}"
+          sequence:
+            - action: todo.add_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+      - repeat:
+          for_each: "{{ back }}"
+          sequence:
+            - action: todo.update_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+                status: needs_action
+    verbosity: specific
+    response:
+      done:
+        brief: Añadido a la lista de tareas.
+        specific: "He añadido {{ slots.item }} a la lista de tareas."
+    needs:
+      - Set the home's to-do list on the Settings page, or give it one of its
+        own (its implied target).

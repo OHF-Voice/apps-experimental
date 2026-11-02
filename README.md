@@ -25,6 +25,11 @@ Expect things to be unpolished!
 - [wake-phonmatchnet](wake-phonmatchnet/DOCS.md) - [wake word][wake_word] app using [PhonMatchNet][phonmatchnet]
     - Streaming detection of arbitrary wake words
 
+## Voice Satellites
+
+- [voice_labs](voice_labs/DOCS.md) - Voice satellites with your own commands, recognized on this machine
+    - Needs the [Voice Labs integration][voice-labs] and its firmware on a Voice Preview Edition
+
 <!-- Links -->
 [stt]: https://www.home-assistant.io/integrations/stt/
 [canary]: https://huggingface.co/nvidia/canary-1b-v2
@@ -35,3 +40,4 @@ Expect things to be unpolished!
 [conversation]: https://www.home-assistant.io/integrations/conversation/
 [wake_word]: https://www.home-assistant.io/integrations/wake_word/
 [phonmatchnet]: https://github.com/ncsoft/PhonMatchNet
+[voice-labs]: https://github.com/OHF-Voice/voice-labs

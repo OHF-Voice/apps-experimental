@@ -1,0 +1,104 @@
+# The satellites: announcements between them, the intercom, a satellite's own
+# volume, and never mind.
+#
+# An announcement is said on the other satellites, after a chime: every one, or
+# those in the area or on the floor named. One in a call, ringing a timer or
+# joined by the intercom says it once that is over (within a minute).
+#
+# The intercom joins this satellite and the one in the area named, once this
+# call ends: what is said at each is heard at the other. Both stop answering
+# wake words and blink their rings until the button on either is pressed (or
+# after half an hour). Both need firmware that can.
+title: Satellites
+icon: mdi:speaker-wireless
+
+commands:
+  announce:
+    title: Announce
+    icon: mdi:bullhorn
+    description: announce something on the other satellites
+    # "Announce dinner is ready", "tell everyone dinner is ready", "announce
+    # dinner is ready upstairs", "announce in the kitchen that dinner is ready".
+    require: [[announce, broadcast, tell everyone, tell everybody]]
+    optional: [[that], [in, on, to], [the]]
+    names:
+      area: {count: 1}
+      floor: {count: 1}
+    combinations: [[message], [area, message], [floor, message]]
+    wildcard:
+      slot: message
+      after: [announce, broadcast, tell everyone, tell everybody, that]
+      to_end: true
+      max_words: 15
+    announce: "{{ slots.message }}"
+
+  intercom:
+    title: Intercom
+    icon: mdi:phone-in-talk
+    description: talk with another room through its satellite
+    # "Connect to the kitchen", "intercom the kitchen", "call the kitchen
+    # voice assistant", "connect to the voice assistant in the office", "drop
+    # in on the bedroom".
+    require: [[connect, intercom, call, drop in]]
+    optional: [[to, with, on], [the], [voice assistant, satellite], [in]]
+    names:
+      area: {count: 1}
+    intercom: connect
+    needs:
+      - Give the satellites their areas (each one's page), and the areas names
+        (Names page). The button on either satellite ends it.
+
+  # The satellite's own speaker, whatever plays on it: what its dial sets.
+  own_volume_up:
+    title: Turn yourself up
+    icon: mdi:volume-plus
+    description: turn up the satellite's own volume
+    examples: [speak up, talk louder, turn yourself up, turn up your volume]
+    require: [[turn yourself up, turn up your volume, turn your volume up, your volume up, speak up, talk louder, speak louder]]
+    action:
+      action: media_player.volume_up
+      target:
+        entity_id: "{{ satellite.device_media_player }}"
+    verbosity: beep
+
+  own_volume_down:
+    title: Turn yourself down
+    icon: mdi:volume-minus
+    description: turn down the satellite's own volume
+    examples: [turn yourself down, turn down your volume, talk quieter, speak more quietly]
+    require: [[turn yourself down, turn down your volume, turn your volume down, your volume down, talk quieter, talk softer, speak more quietly, speak softer]]
+    action:
+      action: media_player.volume_down
+      target:
+        entity_id: "{{ satellite.device_media_player }}"
+    verbosity: beep
+
+  own_volume_set:
+    title: Set your volume
+    icon: mdi:volume-equal
+    description: set the satellite's own volume
+    # Also turned up or down to a number: "turn yourself up to 50".
+    require: [[your volume, yourself]]
+    optional: [[set, change, make, turn, turn up, turn down], [up, down], [to, at], [percent]]
+    exclude: [by]
+    number: percentage
+    action:
+      action: media_player.volume_set
+      target:
+        entity_id: "{{ satellite.device_media_player }}"
+      data:
+        volume_level: "{{ slots.percentage / 100 }}"
+    verbosity: beep
+    response:
+      done:
+        brief: Done.
+        specific: My volume is at {{ slots.percentage }}%.
+
+  never_mind:
+    title: Never mind
+    icon: mdi:close-circle-outline
+    description: never mind, cancel the request
+    # Said whole only: "cancel the timer" is the timer's. Nothing to do, and by
+    # default nothing said, not even a sound: the satellite stops listening.
+    # Give it a response (Only respond) or a beep to hear that it did.
+    examples: [never mind, nevermind, forget it, "cancel [that]", nothing]

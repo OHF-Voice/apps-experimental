@@ -1,0 +1,117 @@
+# Lists (Polish), as the English library's todo.yaml.
+title: Lists
+icon: mdi:format-list-checks
+
+commands:
+  shopping_list_add:
+    title: Add to the shopping list
+    icon: mdi:cart-plus
+    description: dodać coś do listy zakupów
+    require: [[dodaj, dopisz, wpisz, zapisz, dodać, dopisać], [listy zakupów, listę zakupów, lista zakupów, zakupów, listy, listę]]
+    optional: [[do, na]]
+    exclude: [zadań, do zrobienia]
+    wildcard:
+      slot: item
+      after: [dodaj, dopisz, wpisz, zapisz, dodać, dopisać]
+      before: [do, na]
+      bounded: true
+      max_words: 8
+    home: shopping_list
+    # Each item said ("oranges and bananas": two), unless the list has one
+    # called that whole ("mac and cheese"); one the list has already isn't
+    # added again (already_on_list).
+    adds_to_list: {slot: item, list: entity, each: true}
+    action:
+      # What isn't on the list is added; what was checked off is checked back on.
+      - repeat:
+          for_each: "{{ items }}"
+          sequence:
+            - action: todo.add_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+      - repeat:
+          for_each: "{{ back }}"
+          sequence:
+            - action: todo.update_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+                status: needs_action
+    verbosity: specific
+    response:
+      done:
+        brief: Dodano do listy zakupów.
+        specific: "Dodano {{ slots.item }} do listy zakupów."
+
+  shopping_list_remove:
+    title: Take off the shopping list
+    icon: mdi:cart-minus
+    description: usunąć coś z listy zakupów
+    require: [[usuń, skreśl, wykreśl, wyrzuć, usunąć, skreślić, wykreślić], [listy zakupów, zakupów, listy]]
+    optional: [[z, ze]]
+    exclude: [zadań, do zrobienia]
+    wildcard:
+      slot: item
+      after: [usuń, skreśl, wykreśl, wyrzuć, usunąć, skreślić, wykreślić]
+      before: [z, ze]
+      bounded: true
+      max_words: 5
+    home: shopping_list
+    action:
+      action: todo.remove_item
+      target:
+        entity_id: "{{ slots.entity }}"
+      data:
+        item: "{{ slots.item }}"
+    verbosity: specific
+    response:
+      done:
+        brief: Usunięto z listy zakupów.
+        specific: "Usunięto {{ slots.item }} z listy zakupów."
+
+  todo_add:
+    title: Add to the to-do list
+    icon: mdi:format-list-checks
+    description: dodać coś do listy zadań
+    require: [[dodaj, dopisz, wpisz, zapisz], [listy zadań, listę zadań, lista zadań, zadań, listy rzeczy do zrobienia, rzeczy do zrobienia]]
+    optional: [[do, na]]
+    wildcard:
+      slot: item
+      after: [dodaj, dopisz, wpisz, zapisz]
+      before: [do, na]
+      bounded: true
+      max_words: 8
+    home: todo_list
+    # The whole of it: one the list has already isn't added again
+    # (already_on_list).
+    adds_to_list: {slot: item, list: entity}
+    action:
+      # What isn't on the list is added; what was checked off is checked back on.
+      - repeat:
+          for_each: "{{ items }}"
+          sequence:
+            - action: todo.add_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+      - repeat:
+          for_each: "{{ back }}"
+          sequence:
+            - action: todo.update_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+                status: needs_action
+    verbosity: specific
+    response:
+      done:
+        brief: Dodano do listy zadań.
+        specific: "Dodano {{ slots.item }} do listy zadań."
+    needs:
+      - Set the home's to-do list on the Settings page, or give it one of its
+        own (its implied target).

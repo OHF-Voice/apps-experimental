@@ -1,0 +1,127 @@
+from decimal import Decimal
+
+import pytest
+
+from adapt_ctc.numbers import on_grid, spoken_forms, unit_forms, unit_words, value_grid
+from adapt_ctc.text import name_units, spoken_words
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("105", {"one hundred five", "one hundred and five", "a hundred five", "a hundred and five"}),
+        ("72.5", {"seventy two point five", "seventy two and a half"}),
+        ("0.5", {"zero point five", "half", "a half", "one half", "point five"}),
+        ("1.5", {"one point five", "one and a half"}),
+        ("-5", {"minus five", "negative five"}),
+        ("21", {"twenty one"}),
+        ("2700", {"two thousand seven hundred", "two thousand and seven hundred", "twenty seven hundred"}),
+        ("1000", {"one thousand", "a thousand"}),
+    ],
+)
+def test_spoken_forms(value, expected):
+    assert set(spoken_forms(Decimal(value), "en")) == expected
+
+
+def test_grid_with_halves():
+    grid = value_grid(Decimal("40"), Decimal("41"), Decimal("0.5"))
+    assert grid == [Decimal("40"), Decimal("40.5"), Decimal("41.0")]
+    assert on_grid(Decimal("40.5"), Decimal(40), Decimal(90), Decimal("0.5"))
+    assert not on_grid(Decimal("40.25"), Decimal(40), Decimal(90), Decimal("0.5"))
+    assert not on_grid(Decimal("95"), Decimal(40), Decimal(90), Decimal("0.5"))
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("EcoBee", [["eco", "bee"]]),
+        ("Eco-Bee", [["eco", "bee"]]),
+        ("Zone 2", [["zone", "two"]]),
+        ("2nd Floor", [["second", "floor"]]),
+        ("TV & Sound", [["tv", "and", "sound"]]),
+        ("Kid’s Room", [["kid's", "room"], ["kids", "room"]]),
+        ("  Living   Room ", [["living", "room"]]),
+    ],
+)
+def test_spoken_words(text, expected):
+    assert spoken_words(text, "en") == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("EcoBee", [["ecobee"]]),
+        ("Eco-Bee", [["ecobee"]]),
+        ("Eco Bee", [["eco", "bee"]]),
+        ("Kitchen Ceiling Light", [["kitchen", "ceiling", "light"]]),
+        ("Zone 2", [["zone", "two"]]),
+        ("Kid's Room", [["kid's", "room"], ["kids", "room"]]),
+    ],
+)
+def test_name_units(text, expected):
+    assert name_units(text, "en") == expected
+
+
+def test_unit_forms():
+    forms = dict(unit_forms("hour", "en"))
+    assert forms["an hour"] == 1
+    assert forms["an hour and a half"] == Decimal("1.5")
+    assert forms["one hour and a half"] == Decimal("1.5")
+    assert forms["half an hour"] == Decimal("0.5")
+    german = dict(unit_forms("hour", "de"))
+    assert german["eine stunde"] == 1 and german["eineinhalb stunden"] == Decimal("1.5")
+    assert german["eine halbe stunde"] == Decimal("0.5")
+    assert unit_forms("hour", "sv") == []
+    assert dict(unit_forms("hour", "nl"))["een kwartier"] == Decimal("0.25")
+    assert dict(unit_forms("hour", "es"))["una hora y media"] == Decimal("1.5")
+    assert unit_words("minute", "en") == ("minute", "minutes") and unit_words("minute", "de-AT") == ("minute", "minuten")
+
+
+def test_a_number_before_its_noun():
+    # Spanish and French change a number's last word before a noun: "veintiún
+    # grados", "treinta y una horas", "vingt et une minutes" -- not 1 alone,
+    # which is an article too.
+    assert spoken_forms(Decimal(21), "es") == ["veintiuno", "veintiún", "veintiuna"]
+    assert spoken_forms(Decimal(31), "es") == ["treinta y uno", "treinta y un", "treinta y una"]
+    assert spoken_forms(Decimal(21), "fr") == ["vingt et un", "vingt et une"]
+    assert spoken_forms(Decimal(1), "es") == ["uno"] and spoken_forms(Decimal(1), "fr") == ["un"]
+
+
+def test_a_count_and_a_half_after_its_unit():
+    spanish = dict(unit_forms("minute", "es")) | dict(unit_forms("hour", "es"))
+    assert spanish["dos minutos y medio"] == Decimal("2.5") and spanish["dos horas y media"] == Decimal("2.5")
+    assert spanish["veintiún minutos y medio"] == Decimal("21.5") and "veintiuna minutos y medio" not in spanish
+    french = dict(unit_forms("hour", "fr"))
+    assert french["deux heures et demie"] == Decimal("2.5") and french["vingt et une heures et demie"] == Decimal("21.5")
+    assert french["d'une heure"] == 1 and french["d'un quart d'heure"] == Decimal("0.25")
+    german = dict(unit_forms("minute", "de"))
+    assert german["zweieinhalb minuten"] == Decimal("2.5") and german["zwei und eine halbe minute"] == Decimal("2.5")
+    dutch = dict(unit_forms("minute", "nl")) | dict(unit_forms("hour", "nl"))
+    assert dutch["tweeënhalve minuut"] == Decimal("2.5") and dutch["vierenhalf uur"] == Decimal("4.5")
+    # Said quickly, as the model writes it: "vier half uur", "twee half minuut".
+    assert dutch["vier half uur"] == Decimal("4.5") and dutch["twee half minuut"] == Decimal("2.5")
+
+
+def test_italian_durations():
+    hours = dict(unit_forms("hour", "it"))
+    assert hours["un'ora"] == 1 and hours["mezz'ora"] == Decimal("0.5") and hours["un quarto d'ora"] == Decimal("0.25")
+    assert hours["due ore e mezza"] == Decimal("2.5")
+    assert dict(unit_forms("minute", "it"))["un minuto e mezzo"] == Decimal("1.5")
+    assert spoken_forms(Decimal(21), "it") == ["ventuno", "ventun"]
+
+
+def test_slavic_durations():
+    # More forms of a unit than two, a feminine number before minutes, and the
+    # unit alone for one ("na minutę", "на час").
+    assert unit_words("minute", "pl") == ("minuta", "minut", "minuty", "minutę")
+    assert spoken_forms(Decimal(2), "pl") == ["dwa", "dwie"]
+    assert spoken_forms(Decimal(21), "ru") == ["двадцать один", "двадцать одна", "двадцать одну"]
+    assert spoken_forms(Decimal(5), "uk") == ["п'ять"]  # ICU's "пʼять", as the model spells it
+    polish = dict(unit_forms("minute", "pl")) | dict(unit_forms("hour", "pl"))
+    assert polish["minutę"] == 1 and polish["pół godziny"] == Decimal("0.5") and polish["kwadrans"] == Decimal("0.25")
+    assert polish["półtorej minuty"] == Decimal("1.5") and polish["dwie i pół minuty"] == Decimal("2.5")
+    russian = dict(unit_forms("hour", "ru"))
+    assert russian["час"] == 1 and russian["полчаса"] == Decimal("0.5") and russian["полтора часа"] == Decimal("1.5")
+    ukrainian = dict(unit_forms("minute", "uk"))
+    assert ukrainian["хвилину"] == 1 and ukrainian["півтори хвилини"] == Decimal("1.5")
+    assert ukrainian["дві з половиною хвилини"] == Decimal("2.5")

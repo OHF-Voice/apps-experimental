@@ -1,0 +1,24 @@
+---
+configuration:
+  wake_cutoff:
+    name: Wake word cutoff
+    description: >-
+      Probability at which the satellite's own detector fires, for every
+      verified wake word (empty: each its own, as measured -- 0.2 for "Okay
+      Nabu"). Lower is more generous; the app verifies each detection with a
+      second, stricter stage. Custom wake words run at their own cutoff. A
+      cutoff set on the Wake words page wins.
+  speaker_threshold:
+    name: Speaker threshold
+    description: >-
+      How closely a voice must match an enrolled one to be identified
+      (cosine score).
+  silence_seconds:
+    name: End-of-command silence
+    description: >-
+      Seconds of silence after speech that end a command. "Silence to end"
+      on the Settings page wins over this.
+  debug_logging:
+    name: Debug logging
+    description: >-
+      Enable debug logging.
