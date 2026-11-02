@@ -1,0 +1,25 @@
+# Runtime. wyoming-wake-kaldi, sentence-stream and microWakeWord are vendored
+# next to voice_labs (wyoming_wake_kaldi/, sentence_stream/, microwakeword/).
+aiohttp>=3.9
+# Home Assistant's sentence triggers, read and matched as it does (voice_labs/triggers.py).
+hassil>=3.12,<4
+icu-rbnf>=0.2.0
+numpy>=2,<3
+onnxruntime>=1.20
+piper-tts>=1.8,<2
+pymicro-features>=2,<3
+pymicro-vad>=2,<3
+pysilero-vad>=3,<4
+PyYAML>=6.0
+ruamel.yaml>=0.18
+scipy>=1.11
+# What the vendored sentence-stream needs (sentence_stream/VENDORED.md).
+regex>=2024.11.6
+sherpa-onnx>=1.12
+soundfile>=0.12
+soxr>=0.5
+tflite>=2.18,<3
+tokenizers>=0.20
+websockets>=13
+wyoming>=1.5.4
+zeroconf<1

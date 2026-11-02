@@ -1,0 +1,10 @@
+# Runtime and local data -- not source.
+/.venv/
+/models/
+/var/
+/calls/
+# Benchmark result dumps (several MB each); scripts/bench_corpus.py regenerates them.
+/tests/bench_*.jsonl
+/wake_words/
+# Left by script/stage_build, which is gone: safe to delete.
+/local/

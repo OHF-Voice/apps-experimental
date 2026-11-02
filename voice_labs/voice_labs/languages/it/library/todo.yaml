@@ -1,0 +1,115 @@
+# Lists (Italian), as the English library's todo.yaml.
+title: Lists
+icon: mdi:format-list-checks
+
+commands:
+  shopping_list_add:
+    title: Add to the shopping list
+    icon: mdi:cart-plus
+    description: aggiungere qualcosa alla lista della spesa
+    require: [[aggiungi, metti, segna, scrivi], [lista della spesa, lista spesa]]
+    optional: [[alla, nella, sulla]]
+    wildcard:
+      slot: item
+      after: [aggiungi, metti, segna, scrivi]
+      before: [alla, nella, sulla]
+      bounded: true
+      max_words: 8
+    home: shopping_list
+    # Each item said ("oranges and bananas": two), unless the list has one
+    # called that whole ("mac and cheese"); one the list has already isn't
+    # added again (already_on_list).
+    adds_to_list: {slot: item, list: entity, each: true}
+    action:
+      # What isn't on the list is added; what was checked off is checked back on.
+      - repeat:
+          for_each: "{{ items }}"
+          sequence:
+            - action: todo.add_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+      - repeat:
+          for_each: "{{ back }}"
+          sequence:
+            - action: todo.update_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+                status: needs_action
+    verbosity: specific
+    response:
+      done:
+        brief: Aggiunto alla lista della spesa.
+        specific: "{{ slots.item }}: aggiunto alla lista della spesa."
+
+  shopping_list_remove:
+    title: Take off the shopping list
+    icon: mdi:cart-minus
+    description: togliere qualcosa dalla lista della spesa
+    require: [[togli, rimuovi, elimina, cancella, leva], [lista della spesa, lista spesa]]
+    optional: [[dalla]]
+    wildcard:
+      slot: item
+      after: [togli, rimuovi, elimina, cancella, leva]
+      before: [dalla]
+      bounded: true
+      max_words: 5
+    home: shopping_list
+    action:
+      action: todo.remove_item
+      target:
+        entity_id: "{{ slots.entity }}"
+      data:
+        item: "{{ slots.item }}"
+    verbosity: specific
+    response:
+      done:
+        brief: Tolto dalla lista della spesa.
+        specific: "{{ slots.item }}: tolto dalla lista della spesa."
+
+  todo_add:
+    title: Add to the to-do list
+    icon: mdi:format-list-checks
+    description: aggiungere qualcosa alla lista delle cose da fare
+    require: [[aggiungi, metti, segna, scrivi], [cose da fare, lista delle attività]]
+    optional: [[alla, nella, sulla], [lista delle]]
+    wildcard:
+      slot: item
+      after: [aggiungi, metti, segna, scrivi]
+      before: [alla, nella, sulla]
+      bounded: true
+      max_words: 8
+    home: todo_list
+    # The whole of it: one the list has already isn't added again
+    # (already_on_list).
+    adds_to_list: {slot: item, list: entity}
+    action:
+      # What isn't on the list is added; what was checked off is checked back on.
+      - repeat:
+          for_each: "{{ items }}"
+          sequence:
+            - action: todo.add_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+      - repeat:
+          for_each: "{{ back }}"
+          sequence:
+            - action: todo.update_item
+              target:
+                entity_id: "{{ slots.entity }}"
+              data:
+                item: "{{ repeat.item }}"
+                status: needs_action
+    verbosity: specific
+    response:
+      done:
+        brief: Aggiunto alle cose da fare.
+        specific: "{{ slots.item }}: aggiunto alle cose da fare."
+    needs:
+      - Set the home's to-do list on the Settings page, or give it one of its
+        own (its implied target).
